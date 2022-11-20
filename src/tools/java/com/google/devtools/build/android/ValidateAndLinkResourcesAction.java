@@ -177,23 +177,26 @@ public final class ValidateAndLinkResourcesAction {
       }
 
       profiler.recordEndOf("validate").startTask("link");
-      ResourceLinker.create(aapt2Options.aapt2, executorService, scopedTmp.getPath())
-          .aapt2CompatFlags(aapt2Options.aapt2CompatFlags)
-          .profileUsing(profiler)
-          // NB: these names are really confusing.
-          //   .dependencies is meant for linking in android.jar
-          //   .include is meant for regular dependencies
-          //   .resourceApks is meant for linking runtime resource only apks
-          .dependencies(Optional.ofNullable(options.deprecatedLibraries).orElse(options.libraries))
-          .include(includes)
-          .resourceApks(resourceApks)
-          .buildVersion(aapt2Options.buildToolsVersion)
-          .outputAsProto(aapt2Options.resourceTableAsProto)
-          .featureFlags(aapt2Options.featureFlags)
-          .linkStatically(resources)
-          .copyLibraryTo(options.staticLibraryOut)
-          .copySourceJarTo(options.sourceJarOut)
-          .copyRTxtTo(options.rTxtOut);
+      StaticLibrary staticLibrary =
+          ResourceLinker.create(aapt2Options.aapt2, executorService, scopedTmp.getPath())
+              .aapt2CompatFlags(aapt2Options.aapt2CompatFlags)
+              .profileUsing(profiler)
+              // NB: these names are really confusing.
+              //   .dependencies is meant for linking in android.jar
+              //   .include is meant for regular dependencies
+              //   .resourceApks is meant for linking runtime resource only apks
+              .dependencies(
+                  Optional.ofNullable(options.deprecatedLibraries).orElse(options.libraries))
+              .include(includes)
+              .resourceApks(resourceApks)
+              .buildVersion(aapt2Options.buildToolsVersion)
+              .outputAsProto(aapt2Options.resourceTableAsProto)
+              .featureFlags(aapt2Options.featureFlags)
+              .linkStatically(resources);
+      staticLibrary.copySourceJarTo(options.sourceJarOut).copyRTxtTo(options.rTxtOut);
+      if (options.staticLibraryOut != null) {
+        staticLibrary.copyLibraryTo(options.staticLibraryOut);
+      }
       profiler.recordEndOf("link");
     }
   }
