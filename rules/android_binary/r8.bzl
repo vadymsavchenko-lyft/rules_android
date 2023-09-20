@@ -153,7 +153,7 @@ def process_r8(ctx, validation_ctx, jvm_ctx, packaged_resources_ctx, build_info_
         ],
         mnemonic = "AndroidR8",
         jvm_flags = [
-            "-Xmx8G",
+            "-Xmx10G",
             "-XX:ThreadStackSize=2048",
             "-Dcom.android.tools.r8.dumpkeepradiustofile=" + keep_radius.path,
         ],
