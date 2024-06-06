@@ -149,7 +149,7 @@ def _in_allow_proguard_apply_mapping(fqn):
     return matches(fqn, ALLOW_PROGUARD_APPLY_MAPPING_DICT)
 
 def _use_r8(fqn):
-    return matches(fqn, USE_R8_DICT)
+    return True
 
 def _in_force_final_android_binary_resources(fqn):
     return matches(fqn, FORCE_FINAL_ANDROID_BINARY_RESOURCES_DICT)
