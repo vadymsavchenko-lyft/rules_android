@@ -111,7 +111,7 @@ func (d *Device) Launch(ctx context.Context, manifestPackageName, activity strin
 	if activity != "" {
 		cmp := manifestPackageName + "/" + activity
 		stdOut, stdErr, err = d.Ctl.Exec(
-			ctx, "am", []string{"start", "-a", mainAction, "-n", cmp}, true)
+			ctx, "am", []string{"start", "-a", mainAction, "-c", "android.intent.category.LAUNCHER", "-n", cmp}, true)
 	} else if cmp, resolveErr := d.resolveLauncherActivity(ctx, manifestPackageName); resolveErr == nil {
 		// `am start <package>` builds an implicit MAIN/LAUNCHER intent, which only resolves activities
 		// that also declare CATEGORY_DEFAULT. Launcher activities usually don't, so resolve the
