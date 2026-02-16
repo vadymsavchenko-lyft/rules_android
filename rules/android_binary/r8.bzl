@@ -13,7 +13,7 @@
 # limitations under the License.
 """R8 processor steps for android_binary."""
 
-load("//providers:providers.bzl", "AndroidDexInfo", "AndroidOptimizationInfo", "AndroidPreDexJarInfo", "ProguardMappingInfo")
+load("//providers:providers.bzl", "AndroidDexInfo", "AndroidPreDexJarInfo", "ProguardMappingInfo", "AndroidOptimizationInfo")
 load("//rules:acls.bzl", "acls")
 load("//rules:android_neverlink_aspect.bzl", "StarlarkAndroidNeverlinkInfo")
 load("//rules:common.bzl", "common")
