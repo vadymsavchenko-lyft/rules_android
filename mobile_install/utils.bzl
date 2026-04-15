@@ -13,10 +13,11 @@
 # limitations under the License.
 """Utilities for by the Mobile-Install aspect."""
 
+load("@rules_java//java/common:java_common.bzl", "java_common")
 load("//rules:min_sdk_version.bzl", _min_sdk_version = "min_sdk_version")
 load("//rules:visibility.bzl", "PROJECT_VISIBILITY")
 load("//rules/flags:flags.bzl", "flags")
-load("@rules_java//java/common:java_common.bzl", "java_common")
+
 # Copybara: placeholder for GeneratedExtensionRegistryInfo load
 load("//tools/jdk:jvmopts.bzl", "BASE_JVMOPTS")
 load(":constants.bzl", "constants")
@@ -203,7 +204,7 @@ def dex(ctx, jar, out_dex_shards, deps = None, bootclasspath = None):
         ),
         outputs = out_dex_shards,
         mnemonic = "DesugarDexSharding",
-        progress_message = "MI Desugar, dex and sharding %{input}",
+        progress_message = "MI Desugar, dex and sharding %{input}" + jar.short_path,
         execution_requirements = {
             "worker-key-mnemonic": "DesugarDexSharding",
             "supports-workers": "1",
@@ -234,7 +235,7 @@ def extract_jar_resources(ctx, jar, out_resources):
         inputs = [jar],
         outputs = [out_resources],
         mnemonic = "ExtractJarResources",
-        progress_message = "MI Extracting resources from %{input}",
+        progress_message = "MI Extracting resources from %{input}" + jar.short_path,
     )
 
 def first(collection, allow_empty = False):
@@ -283,7 +284,6 @@ def merge_dex_shards(
     """
     args = ctx.actions.args()
 
-
     args.add("--multidex", "best_effort")
     args.add("--output", out_dex_zip)
     args.add_all(dex_archives, before_each = "--input")
@@ -323,7 +323,7 @@ def strip_r(ctx, jar, out_jar):
         inputs = [jar],
         outputs = [out_jar],
         mnemonic = "StripR",
-        progress_message = "MI Stripping R from %{input}",
+        progress_message = "MI Stripping R from %{input}" + jar.short_path,
         toolchain = None,
     )
 
