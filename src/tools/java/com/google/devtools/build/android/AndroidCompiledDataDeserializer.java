@@ -109,6 +109,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.TreeSet;
 import java.util.concurrent.TimeUnit;
 import java.util.logging.Logger;
 import java.util.zip.ZipEntry;
@@ -673,7 +674,7 @@ public class AndroidCompiledDataDeserializer implements AndroidDataDeserializer 
     try (ZipFile zipFile = new ZipFile(inPath.toFile())) {
       ResourceContainer resourceContainer =
           readResourceContainer(zipFile, includeFileContentsForValidation);
-      VisibilityRegistry registry = computeResourceVisibility(resourceContainer);
+      VisibilityRegistry registry = computeResourceVisibility(resourceContainer, inPath);
 
       for (ResourceTable resourceTable : resourceContainer.resourceTables()) {
         consumeResourceTable(dependencyInfo, consumers, resourceTable, registry);
@@ -801,8 +802,8 @@ public class AndroidCompiledDataDeserializer implements AndroidDataDeserializer 
    * resource_files} (b/148110689), we perform the classification on a per-directory basis, so that
    * marking something in {@code foo/res} public has no impact on {@code bar/res}.
    */
-  private static VisibilityRegistry computeResourceVisibility(ResourceContainer resourceContainer)
-      throws UnsupportedEncodingException {
+  private static VisibilityRegistry computeResourceVisibility(
+      ResourceContainer resourceContainer, Path inPath) throws UnsupportedEncodingException {
     if (!ResourceCompiler.USE_VISIBILITY_FROM_AAPT2) {
       return new VisibilityRegistry(ImmutableSet.of(), ImmutableSet.of());
     }
@@ -814,9 +815,101 @@ public class AndroidCompiledDataDeserializer implements AndroidDataDeserializer 
     }
 
     PublicResources publicResources = findExplicitlyPublicResources(resourceContainer, sourcePools);
+    ImmutableSet<ResourceName> impliedPrivateResources =
+        findImpliedPrivateResources(resourceContainer, sourcePools, publicResources);
+    logVisibilityClassification(inPath, sourcePools, publicResources, impliedPrivateResources);
     return new VisibilityRegistry(
-        publicResources.explicitlyPublicResources(),
-        findImpliedPrivateResources(resourceContainer, sourcePools, publicResources));
+        publicResources.explicitlyPublicResources(), impliedPrivateResources);
+  }
+
+  private static final int RESVIS_LOG_LIMIT = 60;
+
+  /** Substring of a compiled-resources path to log unconditionally. Override with RESVIS_MATCH. */
+  private static final String RESVIS_ALWAYS_LOG =
+      System.getenv("RESVIS_MATCH") != null ? System.getenv("RESVIS_MATCH") : "appcompat";
+
+  /** Resource entry names traced whatever their verdict. Override with RESVIS_TRACE. */
+  private static final ImmutableSet<String> RESVIS_TRACE =
+      ImmutableSet.copyOf(
+          (System.getenv("RESVIS_TRACE") != null
+                  ? System.getenv("RESVIS_TRACE")
+                  // Resource entry names, not R field names: normalizeName() turns the dots into
+                  // underscores only later, when the field is emitted.
+                  : "theme,Theme.AppCompat.Light")
+              .split(","));
+
+  /**
+   * Records how one resource set was classified, so a package-private R field can be traced back to
+   * the {@code <public>} tag and the source paths that caused it.
+   *
+   * <p>Silent unless the set actually contains a {@code <public>} tag or something was inferred
+   * private: the quiet case is the overwhelming majority of resource sets in a build and logging it
+   * would bury the interesting lines. Grep the build log for {@code RESVIS}.
+   *
+   * <p>Source paths are dumped because classification is keyed on {@link
+   * #getNormalizedResourceDirectory}, which only strips a {@code blaze-*} prefix -- under Bazel the
+   * configuration segment of {@code bazel-out/<cfg>/bin/...} survives into the key, so paths that
+   * differ between machines could in principle change the outcome.
+   */
+  private static void logVisibilityClassification(
+      Path inPath,
+      List<List<String>> sourcePools,
+      PublicResources publicResources,
+      Set<ResourceName> impliedPrivateResources) {
+    // A clean set is normally not worth a line. But for the set under investigation silence is
+    // ambiguous -- "classified nothing" and "action never ran, replayed from cache" look identical
+    // -- so always log a match, even when clean.
+    boolean underInvestigation = inPath.toString().contains(RESVIS_ALWAYS_LOG);
+    if (!underInvestigation
+        && publicResources.explicitlyPublicResources().isEmpty()
+        && impliedPrivateResources.isEmpty()) {
+      return;
+    }
+
+    Set<String> dirsWithPublic = new TreeSet<>();
+    for (Path dir : publicResources.directoriesWithPublicResources()) {
+      dirsWithPublic.add(dir.toString());
+    }
+    logger.warning(
+        String.format(
+            "RESVIS container=%s explicitPublic=%d impliedPrivate=%d dirsWithPublic=%s",
+            inPath,
+            publicResources.explicitlyPublicResources().size(),
+            impliedPrivateResources.size(),
+            dirsWithPublic));
+
+    Set<String> sourcePaths = new TreeSet<>();
+    for (List<String> sourcePool : sourcePools) {
+      sourcePaths.addAll(sourcePool);
+    }
+    logger.warning(
+        String.format("RESVIS   sourcePool(%d)=%s", sourcePaths.size(), truncateForLog(sourcePaths)));
+
+    // Which resources carried an explicit <public> matters as much as how many: aapt2 is invoked
+    // with --preserve-visibility-of-styleables whenever USE_VISIBILITY_FROM_AAPT2 is on, so if
+    // styleables come back marked PUBLIC they make their directory a "directory with public
+    // resources" and every sibling resource is then inferred private -- with no public.xml in
+    // sight. That is the shape to look for in an AAR's own resource set.
+    Set<String> publicNames = new TreeSet<>();
+    for (ResourceName name : publicResources.explicitlyPublicResources()) {
+      publicNames.add(name.pkg() + ":" + name.type() + "/" + name.entry());
+    }
+    logger.warning(String.format("RESVIS   explicitPublic=%s", truncateForLog(publicNames)));
+
+    Set<String> privateNames = new TreeSet<>();
+    for (ResourceName name : impliedPrivateResources) {
+      privateNames.add(name.pkg() + ":" + name.type() + "/" + name.entry());
+    }
+    logger.warning(String.format("RESVIS   impliedPrivate=%s", truncateForLog(privateNames)));
+  }
+
+  /** Caps a log line, stating how much was dropped rather than truncating silently. */
+  private static String truncateForLog(Set<String> values) {
+    if (values.size() <= RESVIS_LOG_LIMIT) {
+      return values.toString();
+    }
+    List<String> head = new ArrayList<>(values).subList(0, RESVIS_LOG_LIMIT);
+    return head + " ...and " + (values.size() - RESVIS_LOG_LIMIT) + " more";
   }
 
   private static PublicResources findExplicitlyPublicResources(
@@ -907,7 +1000,27 @@ public class AndroidCompiledDataDeserializer implements AndroidDataDeserializer 
    * stripping off any {@code blaze-*} prefix for normalization.
    */
   private static Path getNormalizedResourceDirectory(String filename) {
-    Path resDir = Paths.get(filename).getParent().getParent();
+    // Two ways this key stops identifying a resource set uniquely, both worth seeing in a log
+    // before they are diagnosed from a stack trace or a mystery package-private field:
+    //   - an entry whose source is unset resolves to sourcePool[0], which is "" -- NPE below;
+    //   - a short relative source ("res/values/values.xml") normalizes to a bare "res", which
+    //     every other set recorded the same way also normalizes to.
+    Path parent = Paths.get(filename).getParent();
+    if (parent == null || parent.getParent() == null) {
+      // Deliberately a key that cannot equal any other set's: returning "" here would bucket every
+      // degenerate entry together and manufacture the very cross-set privatisation we are hunting.
+      // Upstream this line throws NPE instead, which is how a build finds out the hard way.
+      logger.warning(
+          String.format("RESVIS   degenerate source path (no res dir): [%s]", filename));
+      return Paths.get(" degenerate", filename);
+    }
+    Path resDir = parent.getParent();
+    if (resDir.getNameCount() <= 1) {
+      logger.warning(
+          String.format(
+              "RESVIS   ambiguous res dir [%s] from source [%s] -- not unique across sets",
+              resDir, filename));
+    }
     if (resDir.getName(0).toString().startsWith("blaze-")) {
       // strip off stuff like blaze-out/k8-fastbuild/bin/.
       return resDir.subpath(3, resDir.getNameCount());
@@ -1042,13 +1155,26 @@ public class AndroidCompiledDataDeserializer implements AndroidDataDeserializer 
     }
 
     Visibility getVisibility(ResourceName resourceName) {
+      Visibility visibility;
       if (explicitlyPublicResources.contains(resourceName)) {
-        return Visibility.PUBLIC;
+        visibility = Visibility.PUBLIC;
+      } else {
+        // TODO(b/146647897): make resources private by default
+        visibility =
+            impliedPrivateResources.contains(resourceName)
+                ? Visibility.PRIVATE
+                : Visibility.UNKNOWN;
       }
-      // TODO(b/146647897): make resources private by default
-      return impliedPrivateResources.contains(resourceName)
-          ? Visibility.PRIVATE
-          : Visibility.UNKNOWN;
+      // A resource that stays public emits no other RESVIS line, so "classified public" and "never
+      // looked at" are indistinguishable without tracing a named resource through this decision.
+      // UNKNOWN and PUBLIC both yield a public R field; only PRIVATE drops the modifier.
+      if (RESVIS_TRACE.contains(resourceName.entry())) {
+        logger.warning(
+            String.format(
+                "RESVIS trace %s:%s/%s -> %s",
+                resourceName.pkg(), resourceName.type(), resourceName.entry(), visibility));
+      }
+      return visibility;
     }
   }
 }

@@ -154,6 +154,15 @@ class PlaceholderIdFieldInitializerBuilder {
 
   public void addSimpleResource(
       DependencyInfo dependencyInfo, Visibility visibility, ResourceType type, String name) {
+    if (visibility == Visibility.PRIVATE) {
+      // PRIVATE is what makes IntFieldInitializer drop the "public" modifier, so this is the exact
+      // point where an R field becomes unreachable from another package. Pairs with the
+      // "RESVIS container=" lines from AndroidCompiledDataDeserializer, which say why.
+      logger.warning(
+          String.format(
+              "RESVIS package-private R field: R.%s.%s (from %s)",
+              type, normalizeName(name), dependencyInfo));
+    }
     innerClasses
         .computeIfAbsent(type, t -> new TreeMap<>())
         .put(normalizeName(name), ResourceLinkageInfo.create(dependencyInfo, visibility));
