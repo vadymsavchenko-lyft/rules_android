@@ -158,7 +158,7 @@ class PlaceholderIdFieldInitializerBuilder {
       // PRIVATE is what makes IntFieldInitializer drop the "public" modifier, so this is the exact
       // point where an R field becomes unreachable from another package. Pairs with the
       // "RESVIS container=" lines from AndroidCompiledDataDeserializer, which say why.
-      logger.warning(
+      AndroidCompiledDataDeserializer.logOnce(
           String.format(
               "RESVIS package-private R field: R.%s.%s (from %s)",
               type, normalizeName(name), dependencyInfo));

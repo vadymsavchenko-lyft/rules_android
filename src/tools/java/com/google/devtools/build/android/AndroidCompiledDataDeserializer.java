@@ -110,6 +110,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.TreeSet;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.logging.Logger;
 import java.util.zip.ZipEntry;
@@ -828,6 +829,20 @@ public class AndroidCompiledDataDeserializer implements AndroidDataDeserializer 
   private static final String RESVIS_ALWAYS_LOG =
       System.getenv("RESVIS_MATCH") != null ? System.getenv("RESVIS_MATCH") : "appcompat";
 
+  /**
+   * Every RESVIS fact is re-derived in each dependent's merge action, so logging unconditionally
+   * produced a build log over 100MB that no reader could parse. Dedupe on the whole message: a
+   * repeat of an identical fact is noise, while a differing verdict or container is a different
+   * string and still gets through.
+   */
+  private static final Set<String> RESVIS_SEEN = ConcurrentHashMap.newKeySet();
+
+  static void logOnce(String message) {
+    if (RESVIS_SEEN.add(message)) {
+      logger.warning(message);
+    }
+  }
+
   /** Resource entry names traced whatever their verdict. Override with RESVIS_TRACE. */
   private static final ImmutableSet<String> RESVIS_TRACE =
       ImmutableSet.copyOf(
@@ -870,7 +885,7 @@ public class AndroidCompiledDataDeserializer implements AndroidDataDeserializer 
     for (Path dir : publicResources.directoriesWithPublicResources()) {
       dirsWithPublic.add(dir.toString());
     }
-    logger.warning(
+    logOnce(
         String.format(
             "RESVIS container=%s explicitPublic=%d impliedPrivate=%d dirsWithPublic=%s",
             inPath,
@@ -882,8 +897,10 @@ public class AndroidCompiledDataDeserializer implements AndroidDataDeserializer 
     for (List<String> sourcePool : sourcePools) {
       sourcePaths.addAll(sourcePool);
     }
-    logger.warning(
-        String.format("RESVIS   sourcePool(%d)=%s", sourcePaths.size(), truncateForLog(sourcePaths)));
+    // A sample is enough here: what matters is the shape of these paths -- absolute vs
+    // workspace-relative, and whether any are degenerate -- not all 108 locale variants of an AAR.
+    logOnce(
+        String.format("RESVIS   sourcePool(%d)=%s", sourcePaths.size(), truncate(sourcePaths, 6)));
 
     // Which resources carried an explicit <public> matters as much as how many: aapt2 is invoked
     // with --preserve-visibility-of-styleables whenever USE_VISIBILITY_FROM_AAPT2 is on, so if
@@ -894,22 +911,22 @@ public class AndroidCompiledDataDeserializer implements AndroidDataDeserializer 
     for (ResourceName name : publicResources.explicitlyPublicResources()) {
       publicNames.add(name.pkg() + ":" + name.type() + "/" + name.entry());
     }
-    logger.warning(String.format("RESVIS   explicitPublic=%s", truncateForLog(publicNames)));
+    logOnce(String.format("RESVIS   explicitPublic=%s", truncate(publicNames, RESVIS_LOG_LIMIT)));
 
     Set<String> privateNames = new TreeSet<>();
     for (ResourceName name : impliedPrivateResources) {
       privateNames.add(name.pkg() + ":" + name.type() + "/" + name.entry());
     }
-    logger.warning(String.format("RESVIS   impliedPrivate=%s", truncateForLog(privateNames)));
+    logOnce(String.format("RESVIS   impliedPrivate=%s", truncate(privateNames, RESVIS_LOG_LIMIT)));
   }
 
   /** Caps a log line, stating how much was dropped rather than truncating silently. */
-  private static String truncateForLog(Set<String> values) {
-    if (values.size() <= RESVIS_LOG_LIMIT) {
+  private static String truncate(Set<String> values, int limit) {
+    if (values.size() <= limit) {
       return values.toString();
     }
-    List<String> head = new ArrayList<>(values).subList(0, RESVIS_LOG_LIMIT);
-    return head + " ...and " + (values.size() - RESVIS_LOG_LIMIT) + " more";
+    List<String> head = new ArrayList<>(values).subList(0, limit);
+    return head + " ...and " + (values.size() - limit) + " more";
   }
 
   private static PublicResources findExplicitlyPublicResources(
@@ -1010,13 +1027,12 @@ public class AndroidCompiledDataDeserializer implements AndroidDataDeserializer 
       // Deliberately a key that cannot equal any other set's: returning "" here would bucket every
       // degenerate entry together and manufacture the very cross-set privatisation we are hunting.
       // Upstream this line throws NPE instead, which is how a build finds out the hard way.
-      logger.warning(
-          String.format("RESVIS   degenerate source path (no res dir): [%s]", filename));
-      return Paths.get(" degenerate", filename);
+      logOnce(String.format("RESVIS   degenerate source path (no res dir): [%s]", filename));
+      return Paths.get("__resvis_degenerate__", filename);
     }
     Path resDir = parent.getParent();
     if (resDir.getNameCount() <= 1) {
-      logger.warning(
+      logOnce(
           String.format(
               "RESVIS   ambiguous res dir [%s] from source [%s] -- not unique across sets",
               resDir, filename));
@@ -1169,7 +1185,7 @@ public class AndroidCompiledDataDeserializer implements AndroidDataDeserializer 
       // looked at" are indistinguishable without tracing a named resource through this decision.
       // UNKNOWN and PUBLIC both yield a public R field; only PRIVATE drops the modifier.
       if (RESVIS_TRACE.contains(resourceName.entry())) {
-        logger.warning(
+        logOnce(
             String.format(
                 "RESVIS trace %s:%s/%s -> %s",
                 resourceName.pkg(), resourceName.type(), resourceName.entry(), visibility));

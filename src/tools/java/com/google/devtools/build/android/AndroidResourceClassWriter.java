@@ -117,7 +117,8 @@ public class AndroidResourceClassWriter extends AndroidResourceSymbolSink {
       // The RESVIS lines from PlaceholderIdFieldInitializerBuilder carry no package -- the resource
       // tables leave it empty -- so on their own they cannot say which R class received a
       // package-private field. This names the R class those lines were building.
-      logger.warning(String.format("RESVIS emit R class package=%s label=%s", packageName, label));
+      AndroidCompiledDataDeserializer.logOnce(
+          String.format("RESVIS emit R class package=%s label=%s", packageName, label));
       FieldInitializers initializers = generator.build();
       if (includeClassFile) {
         writeAsClass(initializers);
