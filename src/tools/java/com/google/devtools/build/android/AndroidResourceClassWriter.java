@@ -23,6 +23,7 @@ import com.google.devtools.build.android.resources.Visibility;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.Map;
+import java.util.logging.Logger;
 
 /**
  * Generates the R class for an android_library with made up field initializers for the ids. The
@@ -32,6 +33,8 @@ import java.util.Map;
  * class files.
  */
 public class AndroidResourceClassWriter extends AndroidResourceSymbolSink {
+
+  private static final Logger logger = Logger.getLogger(AndroidResourceClassWriter.class.getName());
 
   /** Create a new class writer. */
   public static AndroidResourceClassWriter createWith(
@@ -111,6 +114,10 @@ public class AndroidResourceClassWriter extends AndroidResourceSymbolSink {
   @Override
   public void flush() throws IOException {
     try {
+      // The RESVIS lines from PlaceholderIdFieldInitializerBuilder carry no package -- the resource
+      // tables leave it empty -- so on their own they cannot say which R class received a
+      // package-private field. This names the R class those lines were building.
+      logger.warning(String.format("RESVIS emit R class package=%s label=%s", packageName, label));
       FieldInitializers initializers = generator.build();
       if (includeClassFile) {
         writeAsClass(initializers);
