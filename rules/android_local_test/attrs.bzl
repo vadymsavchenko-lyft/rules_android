@@ -187,6 +187,22 @@ def make_attrs(additional_aspects = [], native_libs_transition = None):
                 allow_single_file = True,
                 default = "@robolectric//bazel:properties",
             ),
+            host_hybrid_mode = attr.bool(
+                default = True,
+                doc = """
+                Whether to build this test in android_host_hybrid_mode.
+
+                The mode lets select()s resolve to Android while the test itself runs on a
+                non-Android host. It is applied on this rule's incoming edge, so enabling it also
+                moves the test's own outputs (test.xml, test.log, test.outputs) into the
+                transitioned configuration's testlogs tree, where the bazel-testlogs convenience
+                symlink cannot reach them whenever an invocation mixes Android and plain JVM tests.
+
+                Set this to False in repositories that do not select() on
+                //rules/flags:android_host_hybrid_mode, to keep the test in the top-level
+                configuration.
+                """,
+            ),
             test_class = attr.string(
                 doc = """
                 The Java class to be loaded by the test runner.

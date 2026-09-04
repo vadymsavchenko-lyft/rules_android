@@ -22,6 +22,15 @@ load("//rules:visibility.bzl", "PROJECT_VISIBILITY")
 visibility(PROJECT_VISIBILITY)
 
 def _android_host_hybrid_mode_transition_impl(settings, attr):
+    # Rules that opt out keep the incoming configuration. This transition runs on an incoming edge,
+    # so on a test rule it also relocates the test's own outputs (test.xml, test.log, test.outputs)
+    # into the transitioned configuration's testlogs tree. The bazel-testlogs convenience symlink
+    # can only name one configuration, so an invocation mixing Android and plain JVM tests leaves
+    # those outputs unreachable through it. Repositories that do not select() on
+    # //rules/flags:android_host_hybrid_mode can pass host_hybrid_mode = False to avoid that.
+    if not getattr(attr, "host_hybrid_mode", True):
+        return None
+
     return {
         "//rules/flags:android_host_hybrid_mode": True,
     }
@@ -32,4 +41,8 @@ android_host_hybrid_mode_transition = transition(
     outputs = [
         "//rules/flags:android_host_hybrid_mode",
     ],
+)
+
+testing = struct(
+    impl = _android_host_hybrid_mode_transition_impl,
 )
