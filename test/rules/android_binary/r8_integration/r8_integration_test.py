@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 import os
 import subprocess
 import sys
@@ -88,6 +89,49 @@ class R8IntegrationTest(unittest.TestCase):
         expect_unused_activity_resource=True,
         expect_unused_activity_class=True,
     )
+
+  def _assert_art_profile(self, profile, profile_metadata):
+    self.assertEqual(b"pro\x00010\x00", profile[:8])
+    self.assertEqual(b"prm\x00002\x00", profile_metadata[:8])
+
+  def test_r8_baseline_profile(self):
+    app_directory = "test/rules/android_binary/r8_integration/java/com/basicapp"
+    with zipfile.ZipFile(
+        os.path.join(app_directory, "basic_app_R8_baseline_profile.apk")
+    ) as zf:
+      self._assert_art_profile(
+          zf.read("assets/dexopt/baseline.prof"),
+          zf.read("assets/dexopt/baseline.profm"),
+      )
+
+    with zipfile.ZipFile(
+        os.path.join(
+            app_directory, "basic_app_R8_baseline_profile_aab_unsigned.aab"
+        )
+    ) as zf:
+      self._assert_art_profile(
+          zf.read("BUNDLE-METADATA/com.android.tools.build.profiles/baseline.prof"),
+          zf.read("BUNDLE-METADATA/com.android.tools.build.profiles/baseline.profm"),
+      )
+      r8_metadata = json.loads(zf.read("BUNDLE-METADATA/com.android.tools/r8.json"))
+    self.assertTrue(r8_metadata["dexFiles"][0]["startup"])
+
+    with open(
+        os.path.join(app_directory, "basic_app_R8_baseline_profile_primary.prof")
+    ) as f:
+      dumped_profile = f.read()
+    self.assertIn(
+        "Lcom/basicapp/BasicActivity;->onCreate(Landroid/os/Bundle;)V",
+        dumped_profile,
+    )
+    # Only matched by the wildcard rule, and only present if R8 rewrote it to
+    # the renamed listener class.
+    self.assertIn("onClick(Landroid/view/View;)V", dumped_profile)
+    self.assertNotIn("BasicActivity$1", dumped_profile)
+    # Only in the startup profile, which R8 doesn't merge into the ART profile.
+    self.assertIn("Lcom/basicapp/BasicActivity;-><init>()V", dumped_profile)
+    # Only in the baseline profile packaged in the AAR.
+    self.assertIn("Lcom/basicapp/AarLibrary;->run()V", dumped_profile)
 
 
 if __name__ == "__main__":
