@@ -201,6 +201,10 @@ public class CompileLibraryResourcesAction {
     rTxtWriter.flush();
 
     AndroidResourceOutputs.createClassJar(
-        generatedSources, options.classJarOutput, options.targetLabel, options.injectingRuleKind);
+        generatedSources,
+        resourceClassWriter.getClassFiles(),
+        options.classJarOutput,
+        options.targetLabel,
+        options.injectingRuleKind);
   }
 }

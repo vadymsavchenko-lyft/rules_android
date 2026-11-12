@@ -17,6 +17,7 @@ import static com.google.common.collect.ImmutableList.toImmutableList;
 import static com.google.common.truth.Truth.assertThat;
 import static org.junit.Assert.assertThrows;
 
+import com.android.aapt.Resources.Reference;
 import com.android.aapt.Resources.XmlAttribute;
 import com.android.aapt.Resources.XmlElement;
 import com.android.aapt.Resources.XmlNode;
@@ -182,14 +183,16 @@ public class ValidateAndLinkResourcesActionTest {
                     .build())
             .build();
 
+    ImmutableList<Reference> manifestReferences =
+        XmlUtils.getAllResourceReferences(manifestWithRef);
+    ImmutableList<CompiledResources> includes = ImmutableList.of(dep);
+
     UserException expected =
         assertThrows(
             UserException.class,
             () ->
                 ValidateAndLinkResourcesAction.checkVisibilityOfResourceReferences(
-                    XmlUtils.getAllResourceReferences(manifestWithRef),
-                    dummyCompiledResources,
-                    ImmutableList.of(dep)));
+                    manifestReferences, dummyCompiledResources, includes));
 
     assertThat(expected)
         .hasMessageThat()
@@ -218,14 +221,16 @@ public class ValidateAndLinkResourcesActionTest {
     CompiledResources lib =
         createCompiledResources("lib", libFiles, "<manifest package=\"com.lib\"/>");
 
+    ImmutableList<Reference> manifestReferences =
+        XmlUtils.getAllResourceReferences(XmlNode.getDefaultInstance());
+    ImmutableList<CompiledResources> includes = ImmutableList.of(dep);
+
     UserException expected =
         assertThrows(
             UserException.class,
             () ->
                 ValidateAndLinkResourcesAction.checkVisibilityOfResourceReferences(
-                    XmlUtils.getAllResourceReferences(XmlNode.getDefaultInstance()),
-                    lib,
-                    ImmutableList.of(dep)));
+                    manifestReferences, lib, includes));
 
     assertThat(expected)
         .hasMessageThat()
@@ -277,5 +282,89 @@ public class ValidateAndLinkResourcesActionTest {
         };
 
     assertThrows(UserException.class, () -> ValidateAndLinkResourcesAction.main(args));
+  }
+
+  @Test
+  public void visibilityCheck_emptyVisibilityDepsSkipsCheck() throws Exception {
+    Map<String, String> libFiles = new HashMap<>();
+    libFiles.put(
+        "values/values.xml",
+        "<resources><string name=\"lib_string\">@string/private_string</string></resources>");
+
+    CompiledResources lib =
+        createCompiledResources("lib", libFiles, "<manifest package=\"com.lib\"/>");
+
+    // When visibilityDeps is empty, checkVisibilityOfResourceReferences should succeed without
+    // throwing
+    ValidateAndLinkResourcesAction.checkVisibilityOfResourceReferences(
+        XmlUtils.getAllResourceReferences(XmlNode.getDefaultInstance()), lib, ImmutableList.of());
+  }
+
+  @Test
+  public void testCompiledDepWithPublicXml_omittedFallsBackToCompiledDeps() throws Exception {
+    Map<String, String> depFiles = new HashMap<>();
+    depFiles.put(
+        "values/public.xml",
+        "<resources><public name=\"public_string\" type=\"string\"/></resources>");
+    depFiles.put(
+        "values/strings.xml",
+        "<resources><string name=\"private_string\">hello</string></resources>");
+
+    CompiledResources dep =
+        createCompiledResources("dep", depFiles, "<manifest package=\"com.dep\"/>");
+
+    Map<String, String> libFiles = new HashMap<>();
+    libFiles.put(
+        "values/values.xml",
+        "<resources><string name=\"lib_string\">@string/private_string</string></resources>");
+
+    CompiledResources lib =
+        createCompiledResources("lib", libFiles, "<manifest package=\"com.lib\"/>");
+
+    Path outLib = tempDir.resolve("lib.apk");
+    Path outSrcJar = tempDir.resolve("r.srcjar");
+    Path outRTxt = tempDir.resolve("R.txt");
+
+    String[] args =
+        new String[] {
+          "--aapt2",
+          aapt2.toString(),
+          "--resources",
+          lib.getZip().toString() + ":" + lib.getManifest().toString(),
+          "--compiledDep",
+          dep.getZip().toString(),
+          "--staticLibraryOut",
+          outLib.toString(),
+          "--sourceJarOut",
+          outSrcJar.toString(),
+          "--rTxtOut",
+          outRTxt.toString()
+        };
+
+    assertThrows(UserException.class, () -> ValidateAndLinkResourcesAction.main(args));
+  }
+
+  @Test
+  public void testCheckVisibilityOfResourceReferences_directoryWithoutPublicNotPrivate()
+      throws Exception {
+    Map<String, String> depFiles = new HashMap<>();
+    depFiles.put(
+        "values/strings.xml",
+        "<resources><string name=\"unrelated_string\">hello</string></resources>");
+
+    CompiledResources dep =
+        createCompiledResources("dep_no_pub", depFiles, "<manifest package=\"com.dep.no.pub\"/>");
+
+    Map<String, String> libFiles = new HashMap<>();
+    libFiles.put(
+        "values/values.xml",
+        "<resources><string name=\"lib_string\">@string/unrelated_string</string></resources>");
+
+    CompiledResources lib =
+        createCompiledResources("lib_no_pub", libFiles, "<manifest package=\"com.lib.no.pub\"/>");
+
+    // Validating visibility against a dependency directory without <public> tags should NOT throw.
+    ValidateAndLinkResourcesAction.checkVisibilityOfResourceReferences(
+        /* manifestReferences= */ ImmutableList.of(), lib, ImmutableList.of(dep));
   }
 }

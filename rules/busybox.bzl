@@ -132,16 +132,18 @@ def _make_resources_flag(
         ],
     )
 
+def _is_worker_mode_enabled(ctx):
+    return (read_possibly_native_flag(ctx, "internal_persistent_busybox_tools") or
+            read_possibly_native_flag(ctx, "internal_persistent_multiplex_busybox_tools"))
+
 def _set_worker_mode_param_file(ctx, args):
-    if (read_possibly_native_flag(ctx, "internal_persistent_busybox_tools") or
-        read_possibly_native_flag(ctx, "internal_persistent_multiplex_busybox_tools")):
+    if _is_worker_mode_enabled(ctx):
         # Only sets param file mode when worker mode is enabled.
         args.use_param_file("@%s", use_always = True)
         args.set_param_file_format("multiline")
 
 def _set_warning_level(ctx, args):
-    if (read_possibly_native_flag(ctx, "internal_persistent_busybox_tools") or
-        read_possibly_native_flag(ctx, "internal_persistent_multiplex_busybox_tools")):
+    if _is_worker_mode_enabled(ctx):
         # Disable warnings - this are output to stdin/stderr which breaks worker mode
         args.add("--logWarnings=false")
 
@@ -206,7 +208,6 @@ def _package(
         ctx,
         out_r_src_jar = None,
         out_r_txt = None,
-        out_symbols = None,
         out_manifest = None,
         out_proguard_cfg = None,
         out_main_dex_proguard_cfg = None,
@@ -253,7 +254,6 @@ def _package(
       ctx: The context.
       out_r_src_jar: A File. The R.java outputted by linking resources in a srcjar.
       out_r_txt: A File. The resource IDs outputted by linking resources in text.
-      out_symbols: A File. The output zip containing compiled resources.
       out_manifest: A File. The output processed manifest.
       out_proguard_cfg: A File. The proguard config to be generated.
       out_main_dex_proguard_cfg: A File. The main dex proguard config to be generated.
@@ -353,13 +353,15 @@ def _package(
     transitive_input_files.extend(transitive_assets)
     transitive_input_files.extend(transitive_compiled_assets)
     transitive_input_files.extend(transitive_compiled_resources)
-    if transitive_compiled_resources_with_public_xml:
-        compiled_dep_with_public_xml = depset(transitive = transitive_compiled_resources_with_public_xml)
-        args.add_joined(
-            "--compiledDepWithPublicXml",
-            compiled_dep_with_public_xml,
-            join_with = ":",
-        )
+    compiled_dep_with_public_xml = depset(transitive = transitive_compiled_resources_with_public_xml)
+
+    # An empty list explicitly indicates that there are no public resources, causing visibility validation to be skipped.
+    args.add_joined(
+        "--compiledDepWithPublicXml",
+        compiled_dep_with_public_xml,
+        join_with = ":",
+        omit_if_empty = False,
+    )
     transitive_input_files.extend(transitive_manifests)
     transitive_input_files.extend(transitive_r_txts)
     args.add(
@@ -378,9 +380,6 @@ def _package(
     input_files.append(android_jar)
     args.add("--rOutput", out_r_txt)
     output_files.append(out_r_txt)
-    if out_symbols:
-        args.add("--symbolsOut", out_symbols)
-        output_files.append(out_symbols)
     args.add("--srcJarOutput", out_r_src_jar)
     output_files.append(out_r_src_jar)
     if out_proguard_cfg:
@@ -457,7 +456,7 @@ def _package(
         inputs = depset(input_files, transitive = transitive_input_files),
         outputs = output_files,
         mnemonic = "PackageAndroidResources",
-        progress_message = "Packaging Android Resources in %s" % ctx.label,
+        progress_message = "Packaging Android Resources in %{label}",
         jvm_flags = _C1_ONLY_FLAGS,
     )
 
@@ -502,7 +501,7 @@ def _parse(
         inputs = assets,
         outputs = [out_symbols],
         mnemonic = "ParseAndroidResources",
-        progress_message = "Parsing Android Resources in %s" % out_symbols.short_path,
+        progress_message = "Parsing Android Resources in %{output}",
         jvm_flags = _C1_ONLY_FLAGS,
     )
 
@@ -589,8 +588,7 @@ def _merge_assets(
         ),
         outputs = [out_assets_zip],
         mnemonic = "MergeAndroidAssets",
-        progress_message =
-            "Merging Android Assets in %s" % out_assets_zip.short_path,
+        progress_message = "Merging Android Assets in %{output}",
         jvm_flags = _C1_ONLY_FLAGS,
     )
 
@@ -652,22 +650,22 @@ def _validate_and_link(
         join_with = ":",
     )
     transitive_input_files.append(transitive_compiled_resources)
-    if transitive_compiled_resources_with_public_xml:
-        args.add_joined(
-            "--compiledDepWithPublicXml",
-            transitive_compiled_resources_with_public_xml,
-            join_with = ":",
-        )
+
+    # An empty list explicitly indicates that there are no public resources, causing visibility validation to be skipped.
+    args.add_joined(
+        "--compiledDepWithPublicXml",
+        transitive_compiled_resources_with_public_xml,
+        join_with = ":",
+        omit_if_empty = False,
+    )
     args.add("--manifest", manifest)
     input_files.append(manifest)
     if java_package:
         args.add("--packageForR", java_package)
     args.add("--sourceJarOut", out_r_src_jar)
-    output_files.append(out_r_src_jar)
     args.add("--rTxtOut", out_r_txt)
-    output_files.append(out_r_txt)
     args.add("--staticLibraryOut", out_file)
-    output_files.append(out_file)
+    output_files.extend([out_file, out_r_src_jar, out_r_txt])
     args.add_joined(
         "--resourceApks",
         resource_apks,
@@ -689,9 +687,9 @@ def _validate_and_link(
         inputs = depset(input_files, transitive = transitive_input_files),
         outputs = output_files,
         mnemonic = "LinkAndroidResources",
-        progress_message =
-            "Linking Android Resources in " + out_file.short_path,
+        progress_message = "Linking Android Resources in %{output}",
         jvm_flags = _C1_ONLY_FLAGS,
+        supports_path_mapping = True,
     )
 
 def _compile(
@@ -773,7 +771,7 @@ def _compile(
         inputs = resource_files + assets + optional_inputs,
         outputs = [out_file] + optional_outputs,
         mnemonic = "CompileAndroidResources",
-        progress_message = "Compiling Android Resources in %s" % out_file.short_path,
+        progress_message = "Compiling Android Resources in %{output}",
         jvm_flags = _C1_ONLY_FLAGS,
     )
 
@@ -880,14 +878,22 @@ def _merge_compiled(
         inputs = depset(input_files, transitive = transitive_input_files),
         outputs = output_files,
         mnemonic = "StarlarkMergeCompiledAndroidResources",
-        progress_message =
-            "Merging compiled Android Resources in " + out_class_jar.short_path,
+        progress_message = "Merging compiled Android Resources in %{output}",
         jvm_flags = _C1_ONLY_FLAGS,
+        supports_path_mapping = True,
     )
 
-def _java_run(ctx, mnemonic = None, *args, **kwargs):
+def _java_run(ctx, mnemonic = None, supports_path_mapping = False, *args, **kwargs):
     enable_workers = read_possibly_native_flag(ctx, "internal_persistent_busybox_tools")
     multiplex_workers = read_possibly_native_flag(ctx, "internal_persistent_multiplex_busybox_tools")
+
+    # Path mapped spawns must be sandboxed, which forces persistent workers to be sandboxed and
+    # multiplex workers to fall back to singleplex. Only enable path mapping when worker mode is
+    # disabled.
+    if supports_path_mapping and not _is_worker_mode_enabled(ctx):
+        execution_requirements = dict(kwargs.pop("execution_requirements", {}))
+        execution_requirements["supports-path-mapping"] = "1"
+        kwargs["execution_requirements"] = execution_requirements
 
     _java.run(ctx, mnemonic = mnemonic, supports_workers = enable_workers, supports_multiplex_workers = multiplex_workers, *args, **kwargs)
 
@@ -1009,8 +1015,9 @@ def _merge_manifests(
         inputs = depset(directs, transitive = transitives),
         outputs = outputs,
         mnemonic = "MergeManifests",
-        progress_message = "Merging Android Manifests in %s" % out_file.short_path,
+        progress_message = "Merging Android Manifests in %{output}",
         jvm_flags = _C1_ONLY_FLAGS,
+        supports_path_mapping = True,
     )
 
 def _process_databinding(
@@ -1141,7 +1148,8 @@ def _generate_binary_r(
         inputs = depset([r_txt, manifest], transitive = transitive_r_txts + transitive_manifests),
         outputs = [out_class_jar],
         mnemonic = "StarlarkRClassGenerator",
-        progress_message = "Generating R classes",
+        progress_message = "Generating R classes for %{output}",
+        supports_path_mapping = True,
     )
 
 def _make_aar(
@@ -1220,7 +1228,7 @@ def _make_aar(
         ),
         outputs = [out_aar],
         mnemonic = "StarlarkAARGenerator",
-        progress_message = "Generating AAR package for %s" % ctx.label,
+        progress_message = "Generating AAR package for %{label}",
         jvm_flags = _C1_ONLY_FLAGS,
     )
 
@@ -1302,10 +1310,10 @@ def _shrink(
         inputs = input_files,
         arguments = [args],
         mnemonic = "ResourceShrinker",
-        progress_message =
-            "Shrinking resources for " + str(ctx.label),
+        progress_message = "Shrinking resources for %{label}",
         host_javabase = host_javabase,
         use_default_shell_env = True,
+        supports_path_mapping = True,
     )
 
 def _convert_resources_to_apk(
@@ -1361,10 +1369,10 @@ def _convert_resources_to_apk(
         inputs = input_files,
         arguments = [args],
         mnemonic = "ResourceConverter",
-        progress_message =
-            "Converting resources for " + str(ctx.label),
+        progress_message = "Converting resources for %{label}",
         host_javabase = host_javabase,
         use_default_shell_env = True,
+        supports_path_mapping = True,
     )
 
 def _optimize(
@@ -1407,6 +1415,7 @@ def _optimize(
         output_files.append(resource_path_shortening_map)
     if resource_optimization_config:
         args.add("--collapse-resource-names")
+        args.add("--deduplicate-entry-values")
         args.add("--resources-config-path", resource_optimization_config)
         input_files.append(resource_optimization_config)
     if enable_sparse_encoding:
@@ -1425,9 +1434,9 @@ def _optimize(
         inputs = input_files,
         outputs = output_files,
         mnemonic = "Aapt2Optimize",
-        progress_message =
-            "Optimizing Android resources for " + str(ctx.label),
+        progress_message = "Optimizing Android resources for %{label}",
         use_default_shell_env = True,
+        supports_path_mapping = True,
     )
 
 busybox = struct(

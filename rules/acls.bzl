@@ -28,13 +28,13 @@ To update a list:
 
 load("//rules:visibility.bzl", "PROJECT_VISIBILITY")
 load("//rules/acls:aapt2_feature_flags.bzl", "AAPT2_FEATURE_FLAGS")
-load("//rules/acls:aar_import_deps_checker.bzl", "AAR_IMPORT_DEPS_CHECKER_FALLBACK", "AAR_IMPORT_DEPS_CHECKER_ROLLOUT")
 load("//rules/acls:aar_import_explicit_exports_manifest.bzl", "AAR_IMPORT_EXPLICIT_EXPORTS_MANIFEST")
+load("//rules/acls:aar_import_exports_deps.bzl", "AAR_IMPORT_EXPORTS_DEPS")
 load("//rules/acls:aar_import_exports_r_java.bzl", "AAR_IMPORT_EXPORTS_R_JAVA")
 load("//rules/acls:aar_import_propagate_native_libs.bzl", "AAR_IMPORT_PROPAGATE_NATIVE_LIBS_FALLBACK")
+load("//rules/acls:aar_import_use_ijar.bzl", "AAR_IMPORT_USE_IJAR_FALLBACK")
 load("//rules/acls:allow_resource_conflicts.bzl", "ALLOW_RESOURCE_CONFLICTS")
 load("//rules/acls:android_apk_to_bundle_features_lockdown.bzl", "ANDROID_APK_TO_BUNDLE_FEATURES")
-load("//rules/acls:android_archive_dogfood.bzl", "ANDROID_ARCHIVE_DOGFOOD")
 load("//rules/acls:android_archive_duplicate_class_allowlist.bzl", "ANDROID_ARCHIVE_DUPLICATE_CLASS_ALLOWLIST")
 load("//rules/acls:android_archive_excluded_deps_denylist.bzl", "ANDROID_ARCHIVE_EXCLUDED_DEPS_DENYLIST")
 load("//rules/acls:android_archive_exposed_package_allowlist.bzl", "ANDROID_ARCHIVE_EXPOSED_PACKAGE_ALLOWLIST")
@@ -47,19 +47,12 @@ load("//rules/acls:android_feature_splits_dogfood.bzl", "ANDROID_FEATURE_SPLITS_
 load("//rules/acls:android_instrumentation_test_manifest_check_rollout.bzl", "ANDROID_INSTRUMENTATION_TEST_MANIFEST_CHECK_FALLBACK", "ANDROID_INSTRUMENTATION_TEST_MANIFEST_CHECK_ROLLOUT")
 load("//rules/acls:android_instrumentation_test_prebuilt_test_apk.bzl", "ANDROID_INSTRUMENTATION_TEST_PREBUILT_TEST_APK_FALLBACK", "ANDROID_INSTRUMENTATION_TEST_PREBUILT_TEST_APK_ROLLOUT")
 load("//rules/acls:android_library_resources_without_srcs.bzl", "ANDROID_LIBRARY_RESOURCES_WITHOUT_SRCS", "ANDROID_LIBRARY_RESOURCES_WITHOUT_SRCS_GENERATOR_FUNCTIONS")
-load("//rules/acls:android_library_starlark_resource_outputs.bzl", "ANDROID_LIBRARY_STARLARK_RESOURCE_OUTPUTS_FALLBACK", "ANDROID_LIBRARY_STARLARK_RESOURCE_OUTPUTS_ROLLOUT")
 load("//rules/acls:android_lint_checks_rollout.bzl", "ANDROID_LINT_CHECKS_FALLBACK", "ANDROID_LINT_CHECKS_ROLLOUT")
 load("//rules/acls:android_lint_rollout.bzl", "ANDROID_LINT_FALLBACK", "ANDROID_LINT_ROLLOUT")
-load("//rules/acls:android_test_lockdown.bzl", "ANDROID_TEST_LOCKDOWN_GENERATOR_FUNCTIONS", "ANDROID_TEST_LOCKDOWN_TARGETS")
-load("//rules/acls:b122039567.bzl", "B122039567")
 load("//rules/acls:baseline_profiles_optimizer_integration.bzl", "BASELINE_PROFILES_OPTIMIZER_INTEGRATION", "BASELINE_PROFILES_OPTIMIZER_INTEGRATION_FALLBACK")
-load("//rules/acls:baseline_profiles_rollout.bzl", "BASELINE_PROFILES_ROLLOUT")
 load("//rules/acls:bytecode_transformers.bzl", "BYTECODE_TRANSFORMERS")
 load("//rules/acls:d8_optimization_metadata.bzl", "D8_OPTIMIZATION_METADATA")
 load("//rules/acls:databinding.bzl", "DATABINDING_ALLOWED", "DATABINDING_DISALLOWED")
-load("//rules/acls:desugaring_runtime_jar_classpath.bzl", "DESUGAR_USE_RUNTIME_JARS")
-load("//rules/acls:dex2oat_opts.bzl", "CAN_USE_DEX2OAT_OPTIONS")
-load("//rules/acls:enable_exported_lint_checks.bzl", "ENABLE_EXPORTED_LINT_CHECKS")
 load("//rules/acls:force_final_resources.bzl", "FORCE_FINAL_ANDROID_BINARY_RESOURCES")
 load("//rules/acls:gpu_override.bzl", "CAN_USE_GPU_OVERRIDE")
 load("//rules/acls:install_apps_in_data.bzl", "INSTALL_APPS_IN_DATA")
@@ -72,25 +65,23 @@ load(
 )
 load("//rules/acls:proguard_apply_mapping.bzl", "ALLOW_PROGUARD_APPLY_MAPPING")
 load("//rules/acls:r8.bzl", "USE_R8")
-load("//rules/acls:resource_translation_merging_rollout.bzl", "RESOURCE_TRANSLATION_MERGING_FALLBACK", "RESOURCE_TRANSLATION_MERGING_ROLLOUT")
-load("//rules/acls:shared_library_resource_linking.bzl", "SHARED_LIBRARY_RESOURCE_LINKING_ALLOWLIST")
 load("//rules/acls:stamp_signing.bzl", "STAMP_SIGNING_FALLBACK", "STAMP_SIGNING_ROLLOUT")
 load("//rules/acls:test_to_instrument_test_rollout.bzl", "TEST_TO_INSTRUMENT_TEST_FALLBACK", "TEST_TO_INSTRUMENT_TEST_ROLLOUT")
 load("//rules/acls:use_baseline_as_startup_profile.bzl", "USE_BASELINE_AS_STARTUP_PROFILE_FALLBACK", "USE_BASELINE_AS_STARTUP_PROFILE_ROLLOUT")
 
 visibility(PROJECT_VISIBILITY)
 
-def _in_aar_import_deps_checker(fqn):
-    return False
-
 def _in_aar_import_explicit_exports_manifest(fqn):
     return matches(fqn, AAR_IMPORT_EXPLICIT_EXPORTS_MANIFEST_DICT)
 
+def _in_aar_import_exports_deps(fqn):
+    # External repository targets should not default to True for this legacy allowlist.
+    if fqn.startswith("@") and not fqn.startswith("@//") and not fqn.startswith("@@//"):
+        return False
+    return matches(fqn, AAR_IMPORT_EXPORTS_DEPS_DICT)
+
 def _in_aar_import_exports_r_java(fqn):
     return matches(fqn, AAR_IMPORT_EXPORTS_R_JAVA_DICT)
-
-def _in_android_archive_dogfood(fqn):
-    return matches(fqn, ANDROID_ARCHIVE_DOGFOOD_DICT)
 
 def _in_android_archive_excluded_deps_denylist(fqn):
     return matches(fqn, ANDROID_ARCHIVE_EXCLUDED_DEPS_DENYLIST_DICT)
@@ -110,28 +101,14 @@ def _in_lint_registry_rollout(fqn):
 def _in_android_build_stamping_rollout(fqn):
     return not matches(fqn, ANDROID_BUILD_STAMPING_FALLBACK_DICT) and matches(fqn, ANDROID_BUILD_STAMPING_ROLLOUT_DICT)
 
-def _in_android_test_lockdown_allowlist(fqn, generator):
-    if generator == "android_test":
-        return matches(fqn, ANDROID_TEST_LOCKDOWN_TARGETS)
-    return generator in ANDROID_TEST_LOCKDOWN_GENERATOR_FUNCTIONS_DICT
-
-def _in_b122039567(fqn):
-    return matches(fqn, B122039567_DICT)
-
 def _in_android_library_resources_without_srcs(fqn):
     return matches(fqn, ANDROID_LIBRARY_RESOURCES_WITHOUT_SRCS_DICT)
 
 def _in_android_library_resources_without_srcs_generator_functions(gfn):
     return gfn in ANDROID_LIBRARY_RESOURCES_WITHOUT_SRCS_GENERATOR_FUNCTIONS_DICT
 
-def _in_android_library_starlark_resource_outputs_rollout(fqn):
-    return not matches(fqn, ANDROID_LIBRARY_STARLARK_RESOURCE_OUTPUTS_FALLBACK_DICT) and matches(fqn, ANDROID_LIBRARY_STARLARK_RESOURCE_OUTPUTS_ROLLOUT_DICT)
-
 def _in_databinding_allowed(fqn):
     return not matches(fqn, DATABINDING_DISALLOWED_DICT) and matches(fqn, DATABINDING_ALLOWED_DICT)
-
-def _in_dex2oat_opts(fqn):
-    return matches(fqn, CAN_USE_DEX2OAT_OPTIONS_DICT)
 
 def _in_gpu_override(fqn):
     return matches(fqn, CAN_USE_GPU_OVERRIDE_DICT)
@@ -157,9 +134,6 @@ def _in_android_instrumentation_test_prebuilt_test_apk(fqn):
 def _get_android_archive_exposed_package_allowlist(fqn):
     return ANDROID_ARCHIVE_EXPOSED_PACKAGE_ALLOWLIST.get(fqn, [])
 
-def _in_baseline_profiles_rollout(fqn):
-    return matches(fqn, BASELINE_PROFILES_ROLLOUT)
-
 def _in_baseline_profiles_optimizer_integration(fqn):
     return matches(fqn, BASELINE_PROFILES_OPTIMIZER_INTEGRATION_DICT) and not matches(fqn, BASELINE_PROFILES_OPTIMIZER_INTEGRATION_FALLBACK_DICT)
 
@@ -168,9 +142,6 @@ def _in_android_apk_to_bundle_features(fqn):
 
 def _get_android_archive_duplicate_class_allowlist(fqn):
     return ANDROID_ARCHIVE_DUPLICATE_CLASS_ALLOWLIST.get(fqn, [])
-
-def _in_shared_library_resource_linking_allowlist(fqn):
-    return matches(fqn, SHARED_LIBRARY_RESOURCE_LINKING_DICT)
 
 def _in_android_binary_min_sdk_version_attribute_allowlist(fqn):
     return True
@@ -199,17 +170,8 @@ def _get_optimizer_execution_requirements(target_package):
 def _in_stamp_signing_rollout(fqn):
     return matches(fqn, STAMP_SIGNING_ROLLOUT_DICT) and not matches(fqn, STAMP_SIGNING_FALLBACK_DICT)
 
-def _in_desugaring_runtime_jar_classpath_rollout():
-    return DESUGAR_USE_RUNTIME_JARS
-
-def _in_resource_translation_merging_rollout(fqn):
-    return matches(fqn, RESOURCE_TRANSLATION_MERGING_ROLLOUT_DICT) and not matches(fqn, RESOURCE_TRANSLATION_MERGING_FALLBACK_DICT)
-
 def _in_d8_optimization_metadata(fqn):
     return matches(fqn, D8_OPTIMIZATION_METADATA_DICT)
-
-def _in_enable_exported_lint_checks(fqn):
-    return matches(fqn, ENABLE_EXPORTED_LINT_CHECKS_DICT)
 
 def _get_aapt2_feature_flags(_):
     return AAPT2_FEATURE_FLAGS
@@ -223,6 +185,9 @@ def _in_allowed_bytecode_transformers(fqn):
 def _in_aar_import_propagate_native_libs(fqn):
     return not matches(fqn, AAR_IMPORT_PROPAGATE_NATIVE_LIBS_FALLBACK_DICT)
 
+def _in_aar_import_use_ijar(fqn):
+    return not matches(fqn, AAR_IMPORT_USE_IJAR_FALLBACK_DICT)
+
 def make_dict(lst):
     """Do not use this method outside of acls directory."""
     return {t: True for t in lst}
@@ -233,19 +198,15 @@ def make_min_sdk_dict(dict_of_lists):
         res[k] = make_dict(dict_of_lists[k])
     return res
 
-AAR_IMPORT_DEPS_CHECKER_FALLBACK_DICT = make_dict(AAR_IMPORT_DEPS_CHECKER_FALLBACK)
-AAR_IMPORT_DEPS_CHECKER_ROLLOUT_DICT = make_dict(AAR_IMPORT_DEPS_CHECKER_ROLLOUT)
 AAR_IMPORT_EXPLICIT_EXPORTS_MANIFEST_DICT = make_dict(AAR_IMPORT_EXPLICIT_EXPORTS_MANIFEST)
+AAR_IMPORT_EXPORTS_DEPS_DICT = make_dict(AAR_IMPORT_EXPORTS_DEPS)
 AAR_IMPORT_EXPORTS_R_JAVA_DICT = make_dict(AAR_IMPORT_EXPORTS_R_JAVA)
 
-ANDROID_ARCHIVE_DOGFOOD_DICT = make_dict(ANDROID_ARCHIVE_DOGFOOD)
 ANDROID_ARCHIVE_EXCLUDED_DEPS_DENYLIST_DICT = make_dict(ANDROID_ARCHIVE_EXCLUDED_DEPS_DENYLIST)
 
 ANDROID_FEATURE_SPLITS_DOGFOOD_DICT = make_dict(ANDROID_FEATURE_SPLITS_DOGFOOD)
 ANDROID_LIBRARY_RESOURCES_WITHOUT_SRCS_DICT = make_dict(ANDROID_LIBRARY_RESOURCES_WITHOUT_SRCS)
 ANDROID_LIBRARY_RESOURCES_WITHOUT_SRCS_GENERATOR_FUNCTIONS_DICT = make_dict(ANDROID_LIBRARY_RESOURCES_WITHOUT_SRCS_GENERATOR_FUNCTIONS)
-ANDROID_LIBRARY_STARLARK_RESOURCE_OUTPUTS_FALLBACK_DICT = make_dict(ANDROID_LIBRARY_STARLARK_RESOURCE_OUTPUTS_FALLBACK)
-ANDROID_LIBRARY_STARLARK_RESOURCE_OUTPUTS_ROLLOUT_DICT = make_dict(ANDROID_LIBRARY_STARLARK_RESOURCE_OUTPUTS_ROLLOUT)
 ANDROID_LINT_CHECKS_FALLBACK_DICT = make_dict(ANDROID_LINT_CHECKS_FALLBACK)
 ANDROID_LINT_CHECKS_ROLLOUT_DICT = make_dict(ANDROID_LINT_CHECKS_ROLLOUT)
 ANDROID_LINT_FALLBACK_DICT = make_dict(ANDROID_LINT_FALLBACK)
@@ -255,10 +216,6 @@ LINT_REGISTRY_FALLBACK_DICT = make_dict(LINT_REGISTRY_FALLBACK)
 LINT_REGISTRY_ROLLOUT_DICT = make_dict(LINT_REGISTRY_ROLLOUT)
 ANDROID_BUILD_STAMPING_ROLLOUT_DICT = make_dict(ANDROID_BUILD_STAMPING_ROLLOUT)
 ANDROID_BUILD_STAMPING_FALLBACK_DICT = make_dict(ANDROID_BUILD_STAMPING_FALLBACK)
-ANDROID_TEST_LOCKDOWN_GENERATOR_FUNCTIONS_DICT = make_dict(ANDROID_TEST_LOCKDOWN_GENERATOR_FUNCTIONS)
-ANDROID_TEST_LOCKDOWN_TARGETS_DICT = make_dict(ANDROID_TEST_LOCKDOWN_TARGETS)
-B122039567_DICT = make_dict(B122039567)
-CAN_USE_DEX2OAT_OPTIONS_DICT = make_dict(CAN_USE_DEX2OAT_OPTIONS)
 CAN_USE_GPU_OVERRIDE_DICT = make_dict(CAN_USE_GPU_OVERRIDE)
 AIT_INSTALL_APPS_IN_DATA_DICT = make_dict(INSTALL_APPS_IN_DATA)
 TEST_TO_INSTRUMENT_TEST_FALLBACK_DICT = make_dict(TEST_TO_INSTRUMENT_TEST_FALLBACK)
@@ -270,13 +227,11 @@ ANDROID_INSTRUMENTATION_TEST_MANIFEST_CHECK_ROLLOUT_DICT = make_dict(ANDROID_INS
 ANDROID_INSTRUMENTATION_TEST_MANIFEST_CHECK_FALLBACK_DICT = make_dict(ANDROID_INSTRUMENTATION_TEST_MANIFEST_CHECK_FALLBACK)
 ANDROID_INSTRUMENTATION_TEST_PREBUILT_TEST_APK_ROLLOUT_DICT = make_dict(ANDROID_INSTRUMENTATION_TEST_PREBUILT_TEST_APK_ROLLOUT)
 ANDROID_INSTRUMENTATION_TEST_PREBUILT_TEST_APK_FALLBACK_DICT = make_dict(ANDROID_INSTRUMENTATION_TEST_PREBUILT_TEST_APK_FALLBACK)
-BASELINE_PROFILES_ROLLOUT_DICT = make_dict(BASELINE_PROFILES_ROLLOUT)
 BASELINE_PROFILES_OPTIMIZER_INTEGRATION_DICT = make_dict(BASELINE_PROFILES_OPTIMIZER_INTEGRATION)
 BASELINE_PROFILES_OPTIMIZER_INTEGRATION_FALLBACK_DICT = make_dict(BASELINE_PROFILES_OPTIMIZER_INTEGRATION_FALLBACK)
 ANDROID_APK_TO_BUNDLE_FEATURES_DICT = make_dict(ANDROID_APK_TO_BUNDLE_FEATURES)
 DATABINDING_ALLOWED_DICT = make_dict(DATABINDING_ALLOWED)
 DATABINDING_DISALLOWED_DICT = make_dict(DATABINDING_DISALLOWED)
-SHARED_LIBRARY_RESOURCE_LINKING_DICT = make_dict(SHARED_LIBRARY_RESOURCE_LINKING_ALLOWLIST)
 ANDROID_BINARY_MIN_SDK_VERSION_ATTRIBUTE_DICT = make_dict(ANDROID_BINARY_MIN_SDK_VERSION_ATTRIBUTE_ALLOWLIST)
 ANDROID_BINARY_RAW_ACCESS_TO_RESOURCE_PATHS_ALLOWLIST_DICT = make_dict(ANDROID_BINARY_RAW_ACCESS_TO_RESOURCE_PATHS_ALLOWLIST)
 ANDROID_BINARY_RESOURCE_NAME_OBFUSCATION_OPT_OUT_ALLOWLIST_DICT = make_dict(ANDROID_BINARY_RESOURCE_NAME_OBFUSCATION_OPT_OUT_ALLOWLIST)
@@ -288,13 +243,11 @@ RESOURCE_SHRINKING_IN_OPTIMIZER_FALLBACK_DICT = make_dict(RESOURCE_SHRINKING_IN_
 FORCE_FINAL_ANDROID_BINARY_RESOURCES_DICT = make_dict(FORCE_FINAL_ANDROID_BINARY_RESOURCES)
 STAMP_SIGNING_ROLLOUT_DICT = make_dict(STAMP_SIGNING_ROLLOUT)
 STAMP_SIGNING_FALLBACK_DICT = make_dict(STAMP_SIGNING_FALLBACK)
-RESOURCE_TRANSLATION_MERGING_ROLLOUT_DICT = make_dict(RESOURCE_TRANSLATION_MERGING_ROLLOUT)
-RESOURCE_TRANSLATION_MERGING_FALLBACK_DICT = make_dict(RESOURCE_TRANSLATION_MERGING_FALLBACK)
-ENABLE_EXPORTED_LINT_CHECKS_DICT = make_dict(ENABLE_EXPORTED_LINT_CHECKS)
 USE_BASELINE_AS_STARTUP_PROFILE_ROLLOUT_DICT = make_dict(USE_BASELINE_AS_STARTUP_PROFILE_ROLLOUT)
 USE_BASELINE_AS_STARTUP_PROFILE_FALLBACK_DICT = make_dict(USE_BASELINE_AS_STARTUP_PROFILE_FALLBACK)
 BYTECODE_TRANSFORMERS_DICT = make_dict(BYTECODE_TRANSFORMERS)
 AAR_IMPORT_PROPAGATE_NATIVE_LIBS_FALLBACK_DICT = make_dict(AAR_IMPORT_PROPAGATE_NATIVE_LIBS_FALLBACK)
+AAR_IMPORT_USE_IJAR_FALLBACK_DICT = make_dict(AAR_IMPORT_USE_IJAR_FALLBACK)
 
 def matches(fqn, dct):
     # Labels with workspace names ("@workspace//pkg:target") are not supported.
@@ -349,23 +302,18 @@ acls = struct(
     get_android_archive_duplicate_class_allowlist = _get_android_archive_duplicate_class_allowlist,
     get_android_archive_exposed_package_allowlist = _get_android_archive_exposed_package_allowlist,
     get_optimizer_execution_requirements = _get_optimizer_execution_requirements,
-    in_aar_import_deps_checker = _in_aar_import_deps_checker,
     in_aar_import_explicit_exports_manifest = _in_aar_import_explicit_exports_manifest,
+    in_aar_import_exports_deps = _in_aar_import_exports_deps,
     in_aar_import_exports_r_java = _in_aar_import_exports_r_java,
-    in_b122039567 = _in_b122039567,
-    in_android_archive_dogfood = _in_android_archive_dogfood,
     in_android_archive_excluded_deps_denylist = _in_android_archive_excluded_deps_denylist,
     in_android_feature_splits_dogfood = _in_android_feature_splits_dogfood,
-    in_android_library_starlark_resource_outputs_rollout = _in_android_library_starlark_resource_outputs_rollout,
     in_android_library_resources_without_srcs = _in_android_library_resources_without_srcs,
     in_android_library_resources_without_srcs_generator_functions = _in_android_library_resources_without_srcs_generator_functions,
     in_android_lint_checks_rollout = _in_android_lint_checks_rollout,
     in_android_lint_rollout = _in_android_lint_rollout,
     in_lint_registry_rollout = _in_lint_registry_rollout,
     in_android_build_stamping_rollout = _in_android_build_stamping_rollout,
-    in_android_test_lockdown_allowlist = _in_android_test_lockdown_allowlist,
     in_databinding_allowed = _in_databinding_allowed,
-    in_dex2oat_opts = _in_dex2oat_opts,
     in_gpu_override = _in_gpu_override,
     in_install_apps_in_data = _in_install_apps_in_data,
     in_test_to_instrument_test_rollout = _in_test_to_instrument_test_rollout,
@@ -373,10 +321,8 @@ acls = struct(
     in_partial_jetification_targets = _in_partial_jetification_targets,
     in_android_instrumentation_test_manifest_check_rollout = _in_android_instrumentation_test_manifest_check_rollout,
     in_android_instrumentation_test_prebuilt_test_apk = _in_android_instrumentation_test_prebuilt_test_apk,
-    in_baseline_profiles_rollout = _in_baseline_profiles_rollout,
     in_baseline_profiles_optimizer_integration = _in_baseline_profiles_optimizer_integration,
     in_android_apk_to_bundle_features = _in_android_apk_to_bundle_features,
-    in_shared_library_resource_linking_allowlist = _in_shared_library_resource_linking_allowlist,
     in_android_binary_min_sdk_version_attribute_allowlist = _in_android_binary_min_sdk_version_attribute_allowlist,
     in_android_binary_raw_access_to_resource_paths_allowlist = _in_android_binary_raw_access_to_resource_paths_allowlist,
     in_android_binary_resource_name_obfuscation_opt_out_allowlist = _in_android_binary_resource_name_obfuscation_opt_out_allowlist,
@@ -386,13 +332,11 @@ acls = struct(
     in_force_final_android_binary_resources = _in_force_final_android_binary_resources,
     in_resource_shrinking_in_optimizer = _in_resource_shrinking_in_optimizer,
     in_stamp_signing_rollout = _in_stamp_signing_rollout,
-    in_desugaring_runtime_jar_classpath_rollout = _in_desugaring_runtime_jar_classpath_rollout,
-    in_resource_translation_merging_rollout = _in_resource_translation_merging_rollout,
-    in_enable_exported_lint_checks = _in_enable_exported_lint_checks,
     get_aapt2_feature_flags = _get_aapt2_feature_flags,
     use_baseline_as_startup_profile = _use_baseline_as_startup_profile,
     in_allowed_bytecode_transformers = _in_allowed_bytecode_transformers,
     in_aar_import_propagate_native_libs = _in_aar_import_propagate_native_libs,
+    in_aar_import_use_ijar = _in_aar_import_use_ijar,
 )
 
 # Visible for testing

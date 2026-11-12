@@ -52,6 +52,12 @@ ANDROID_MANIFEST = "AndroidManifest.xml"
 BASELINE_PROFILE = "baseline-prof.txt"
 LINT_JAR = "lint.jar"
 
+# Tag that suppresses ImportDepsChecker validation on an aar_import. This is the
+# aar_import analogue of java_import's `tags = ["incomplete-deps"]`, but is
+# deliberately named to make the consequences obvious: missing deps are not
+# caught at build time and can surface as NoClassDefFoundError at runtime.
+INCOMPLETE_DEPS_TAG = "incomplete-deps-this-may-cause-runtime-errors"
+
 def _create_aar_tree_artifact(ctx, name):
     return ctx.actions.declare_directory("%s/unzipped/%s/%s" % (RULE_PREFIX, name, ctx.label.name))
 
@@ -86,7 +92,7 @@ def extract_single_file(
                 create_empty_file = str(create_empty_file).lower(),
             ),
         mnemonic = "AarFileExtractor",
-        progress_message = "Extracting %s from %s" % (filename, aar.basename),
+        progress_message = "Extracting %s from %%{input}" % filename,
         toolchain = ANDROID_TOOLCHAIN_TYPE,
     )
 
@@ -106,7 +112,7 @@ def _extract_resources(
         inputs = [aar],
         outputs = [out_resources_dir, out_assets_dir],
         mnemonic = "AarResourcesExtractor",
-        progress_message = "Extracting resources and assets from %s" % aar.basename,
+        progress_message = "Extracting resources and assets from %{input}",
         toolchain = None,
     )
 
@@ -198,7 +204,7 @@ def _extract_jars(
         inputs = [aar],
         outputs = [out_jars_tree_artifact, out_jars_params_file],
         mnemonic = "AarEmbeddedJarsExtractor",
-        progress_message = "Extracting classes.jar and libs/*.jar from %s" % aar.basename,
+        progress_message = "Extracting classes.jar and libs/*.jar from %{input}",
         toolchain = None,
     )
 
@@ -287,7 +293,7 @@ def _create_import_deps_check(
         ),
         outputs = [jdeps_output],
         mnemonic = "ImportDepsChecker",
-        progress_message = "Checking the completeness of the deps for %s" % jars_to_check,
+        progress_message = "Checking the completeness of the deps for %{label}",
     )
 
 def _process_jars(
@@ -343,20 +349,28 @@ def _process_jars(
     if enable_imports_deps_check:
         validation_results.append(jdeps_artifact)
 
-    java_info = JavaInfo(
-        out_jar,
-        compile_jar = java_common.stamp_jar(
+    compile_jar = (
+        java_common.run_ijar(
             actions = ctx.actions,
             jar = out_jar,
             target_label = ctx.label,
             java_toolchain = java_toolchain,
-        ),
+        ) if _acls.in_aar_import_use_ijar(str(ctx.label)) else java_common.stamp_jar(
+            actions = ctx.actions,
+            jar = out_jar,
+            target_label = ctx.label,
+            java_toolchain = java_toolchain,
+        )
+    )
+    java_info = JavaInfo(
+        out_jar,
+        compile_jar = compile_jar,
         source_jar = source_jar,
         neverlink = False,
         deps = r_java_info + java_infos,  # TODO(djwhang): Exports are not deps.
         exports =
             (r_java_info if _acls.in_aar_import_exports_r_java(str(ctx.label)) else []) +
-            java_infos,  # TODO(djwhang): Deps are not exports.
+            (java_infos if _acls.in_aar_import_exports_deps(str(ctx.label)) else exports),
         # TODO(djwhang): AarImportTest is not expecting jdeps, enable or remove it completely
         # jdeps = jdeps_artifact,
     )
@@ -391,7 +405,7 @@ def _validate_rule(
         inputs = [aar, manifest],
         outputs = [validation_output],
         mnemonic = "ValidateAAR",
-        progress_message = "Validating aar_import %s" % str(ctx.label),
+        progress_message = "Validating aar_import %{label}",
         toolchain = None,
     )
     return validation_output
@@ -443,7 +457,7 @@ def _collect_proguard(
         inputs = [aar],
         outputs = [out_proguard],
         mnemonic = "AarEmbeddedProguardExtractor",
-        progress_message = "Extracting proguard spec from %s" % aar.basename,
+        progress_message = "Extracting proguard spec from %{input}",
         toolchain = None,
     )
     transitive_proguard_specs = []
@@ -503,8 +517,8 @@ def impl(ctx):
         r_java = resources_ctx.r_java,
         exports = _utils.collect_providers(JavaInfo, ctx.attr.exports),
         enable_desugar_java8 = read_possibly_native_flag(ctx, "desugar_for_android"),
-        enable_imports_deps_check =
-            _acls.in_aar_import_deps_checker(str(ctx.label)),
+        # Lyft fork: the deps checker stays disabled, as it was via _in_aar_import_deps_checker.
+        enable_imports_deps_check = False,
         aar_embedded_jars_extractor_tool =
             _get_android_toolchain(ctx).aar_embedded_jars_extractor.files_to_run,
         bootclasspath =
@@ -568,7 +582,13 @@ def impl(ctx):
         proguard_spec,
         aar,
         _get_android_toolchain(ctx).aar_embedded_proguard_extractor.files_to_run,
-        extract_r8_rules = _flags.get(ctx).aar_import_extract_r8_rules if _acls.use_r8(str(ctx.label)) else False,
+        # R8-targeted rules in classes.jar replace proguard.txt only if R8 reads
+        # them from each runtime JAR. Otherwise they could be lost in the deploy JAR merge.
+        extract_r8_rules = (
+            _flags.get(ctx).aar_import_extract_r8_rules and
+            _flags.get(ctx).r8_extract_embedded_proguard_specs and
+            _acls.use_r8(str(ctx.label))
+        ),
     ))
 
     # Will be empty if there's no baseline-prof.txt file in the aar

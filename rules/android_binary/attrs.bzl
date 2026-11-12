@@ -15,7 +15,7 @@
 
 load("//providers:providers.bzl", "StarlarkApkInfo")
 load("//rules:android_neverlink_aspect.bzl", "android_neverlink_aspect")
-load("//rules:android_split_transition.bzl", "android_split_transition")
+load("//rules:android_split_transition.bzl", "android_split_transition", "android_transition")
 load(
     "//rules:attrs.bzl",
     _attrs = "attrs",
@@ -80,10 +80,11 @@ ATTRS = _attrs.replace(
             generate_art_profile = attr.bool(
                 default = True,
                 doc = """
-                Whether to generate ART profile. If true, the ART profile will be generated
-                and bundled into your APK’s asset directory. During APK installation, Android
-                Runtime(ART) will perform Ahead-of-time (AOT) compilation of methods in the
-                profile, speeding up app startup time or reducing jank in some circumstances.
+                Whether to generate ART profile when `proguard_specs` is non-empty. If true and
+                `proguard_specs` is non-empty, the ART profile will be generated and bundled into
+                your APK’s asset directory. During APK installation, Android Runtime(ART) will
+                perform Ahead-of-time (AOT) compilation of methods in the profile, speeding up app
+                startup time or reducing jank in some circumstances.
                 """,
             ),
             startup_profiles = attr.label_list(
@@ -110,7 +111,11 @@ ATTRS = _attrs.replace(
                 as startup profiles if startup profiles are not specified.
                 """,
             ),
-            proguard_specs = attr.label_list(allow_empty = True, allow_files = True),
+            proguard_specs = attr.label_list(
+                allow_empty = True,
+                allow_files = True,
+                cfg = android_transition,
+            ),
             resource_apks = attr.label_list(
                 allow_rules = ["apk_import"],
                 providers = [

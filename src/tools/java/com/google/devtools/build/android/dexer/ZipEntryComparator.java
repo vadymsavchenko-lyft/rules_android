@@ -42,19 +42,34 @@ enum ZipEntryComparator implements Comparator<ZipEntry> {
    * @return {@code compareTo()}-style result
    */
   // Copied from com.android.dx.cf.direct.ClassPathOpener
+  // See
+  // https://cs.android.com/android/platform/superproject/+/android-latest-release:dalvik/dx/src/com/android/dx/cf/direct/ClassPathOpener.java;l=187-200;drc=9dbd802c8c96c3a66873bc600bc7d1374a1d08e5
   @VisibleForTesting
   static int compareClassNames(String a, String b) {
-    // Ensure inner classes sort second
-    a = a.replace('$', '0');
-    b = b.replace('$', '0');
+    boolean aSpecial = a.indexOf('$') >= 0 || a.contains("package-info");
+    boolean bSpecial = b.indexOf('$') >= 0 || b.contains("package-info");
+    if (!aSpecial && !bSpecial) {
+      return a.compareTo(b);
+    }
+    String normA = aSpecial ? normalize(a) : a;
+    String normB = bSpecial ? normalize(b) : b;
+    int normalizedResult = normA.compareTo(normB);
+    if (normalizedResult != 0) {
+      return normalizedResult;
+    }
 
-    /*
-     * Assuming "package-info" only occurs at the end, ensures package-info
-     * sorts first.
-     */
-    a = a.replace("package-info", "");
-    b = b.replace("package-info", "");
-
+    // Normalization is lossy. Keep distinct raw names distinct when this comparator is used as a
+    // TreeMap key comparator, otherwise entries such as Foo$2$1$1 and Foo$2$101 collapse.
     return a.compareTo(b);
+  }
+
+  private static String normalize(String s) {
+    if (s.indexOf('$') >= 0) {
+      s = s.replace('$', '0');
+    }
+    if (s.contains("package-info")) {
+      s = s.replace("package-info", "");
+    }
+    return s;
   }
 }

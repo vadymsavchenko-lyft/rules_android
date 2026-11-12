@@ -22,8 +22,9 @@ load(
     "providers",
 )
 load("//mobile_install:resources.bzl", "liteparse")
-load("//mobile_install:transform.bzl", "dex")
+load("//mobile_install:transform.bzl", "dex", "extract_jar_resources")
 load("//providers:providers.bzl", "StarlarkAndroidResourcesInfo")
+load("//rules:desugar.bzl", _desugar = "desugar")
 load("//rules:java.bzl", _java = "java")
 load("//rules:visibility.bzl", "PROJECT_VISIBILITY")
 load("@rules_java//java/common:java_info.bzl", "JavaInfo")
@@ -75,6 +76,7 @@ def _adapt(target, ctx):
                 ctx,
                 target[JavaInfo].runtime_output_jars,
                 get_desugar_classpath(ctx, target),
+                bootclasspath = _desugar.get_boot_classpath(target, ctx),
             ),
             deps = providers.collect(
                 MIAndroidDexInfo,
@@ -100,6 +102,10 @@ def _adapt(target, ctx):
             ),
         ),
         providers.make_mi_java_resources_info(
+            java_resources = extract_jar_resources(
+                ctx,
+                target[JavaInfo].runtime_output_jars,
+            ),
             deps = providers.collect(
                 MIJavaResourcesInfo,
                 ctx.rule.attr.deps,

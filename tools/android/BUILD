@@ -9,6 +9,11 @@ package(
     default_visibility = ["//visibility:public"],
 )
 
+exports_files(
+    ["build_java8_legacy_dex.sh"],
+    visibility = ["//test/tools/android:__pkg__"],
+)
+
 config_setting(
     name = "minimal_desugaring",
     values = {
@@ -284,6 +289,14 @@ java_binary(
 )
 
 java_binary(
+    name = "keep_radius_html_report_generator",
+    jvm_flags = _JVM_FLAGS,
+    main_class = "com.android.tools.r8.keepradius.KeepRadiusHtmlReportGenerator",
+    visibility = ["//visibility:public"],
+    runtime_deps = ["@rules_android_maven//:com_android_tools_r8"],
+)
+
+java_binary(
     name = "resource_shrinker",
     srcs = ["src/main/java/com/google/devtools/build/android/shrinker/BazelResourceShrinkerCli.java"],
     main_class = "com.google.devtools.build.android.shrinker.BazelResourceShrinkerCli",
@@ -406,8 +419,17 @@ run_singlejar(
     ],
     out = "java_base_extras.jar",
     include_prefixes = [
-        "java/lang/invoke/",
-        "java/lang/annotation/",
+        "java/lang/invoke/StringConcatFactory.class",
+        "java/lang/invoke/LambdaMetafactory.class",
+        "java/lang/invoke/SerializedLambda.class",
+        "java/lang/invoke/ConstantBootstraps.class",
+        "java/lang/runtime/SwitchBootstraps.class",
+        "java/lang/constant/*.class",
+        "java/lang/Enum*.class",
+        "java/lang/annotation/*",
+        "javax/lang/model/element/Modifier.class",
+        "sun/misc/Unsafe.class",
+        "java/nio/file/Files.class",
     ],
     visibility = ["//visibility:private"],
 )
@@ -473,18 +495,6 @@ py_binary(
 )
 
 py_binary(
-    name = "jar_embedded_proguard_extractor",
-    srcs = ["jar_embedded_proguard_extractor.py"],
-    visibility = ["//visibility:public"],
-    deps = [
-        ":json_worker_wrapper",
-        ":junction_lib",
-        ":proguard_extractor_lib",
-        "@py_absl//absl:app",
-    ],
-)
-
-py_binary(
     name = "aar_native_libs_zip_creator",
     srcs = [
         "aar_native_libs_zip_creator.py",
@@ -525,15 +535,6 @@ py_test(
     srcs = ["aar_embedded_proguard_extractor_test.py"],
     deps = [
         ":aar_embedded_proguard_extractor",
-        ":proguard_extractor_lib",
-    ],
-)
-
-py_test(
-    name = "jar_embedded_proguard_extractor_test",
-    srcs = ["jar_embedded_proguard_extractor_test.py"],
-    deps = [
-        ":jar_embedded_proguard_extractor",
         ":proguard_extractor_lib",
     ],
 )

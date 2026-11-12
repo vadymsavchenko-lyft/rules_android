@@ -13,7 +13,7 @@
 # limitations under the License.
 """R8 processor steps for android_binary."""
 
-load("//providers:providers.bzl", "AndroidDexInfo", "AndroidPreDexJarInfo", "ProguardMappingInfo", "AndroidOptimizationInfo")
+load("//providers:providers.bzl", "AndroidDexInfo", "AndroidOptimizationInfo", "AndroidPreDexJarInfo", "ProguardMappingInfo")
 load("//rules:acls.bzl", "acls")
 load("//rules:android_neverlink_aspect.bzl", "StarlarkAndroidNeverlinkInfo")
 load("//rules:baseline_profiles.bzl", _baseline_profiles = "baseline_profiles")
@@ -36,6 +36,7 @@ load(
 )
 load("//rules:visibility.bzl", "PROJECT_VISIBILITY")
 load("//rules/flags:flags.bzl", "read_possibly_native_flag", _flags = "flags")
+load("@rules_java//java/common:java_common.bzl", "java_common")
 
 visibility(PROJECT_VISIBILITY)
 
@@ -66,14 +67,16 @@ def process_r8(ctx, validation_ctx, jvm_ctx, packaged_resources_ctx, build_info_
     # The deploy jar from the deploy_jar processor is not used because as of now, whether it
     # actually produces a deploy jar is determinted by a separate set of ACLs, and also does
     # desugaring differently than with R8.
+    runtime_jars = depset(
+        direct = jvm_ctx.java_info.runtime_output_jars + [packaged_resources_ctx.class_jar],
+        transitive = [jvm_ctx.java_info.transitive_runtime_jars],
+    )
+
     deploy_jar = ctx.actions.declare_file(ctx.label.name + "_deploy.jar")
     java.create_deploy_jar(
         ctx,
         output = deploy_jar,
-        runtime_jars = depset(
-            direct = jvm_ctx.java_info.runtime_output_jars + [packaged_resources_ctx.class_jar],
-            transitive = [jvm_ctx.java_info.transitive_runtime_jars],
-        ),
+        runtime_jars = runtime_jars,
         java_toolchain = common.get_java_toolchain(ctx),
         build_target = ctx.label.name,
         deploy_manifest_lines = build_info_ctx.deploy_manifest_lines,
@@ -82,28 +85,60 @@ def process_r8(ctx, validation_ctx, jvm_ctx, packaged_resources_ctx, build_info_
     dexes_zip = ctx.actions.declare_file(ctx.label.name + "_dexes.zip")
     proguard_mappings_output_file = ctx.actions.declare_file(ctx.label.name + "_proguard.map")
     build_metadata_output = ctx.actions.declare_file(ctx.label.name + "_r8_optimization_info.json")
+    keep_radius = ctx.actions.declare_file(ctx.label.name + "_keep_radius.pb")
 
     android_jar = get_android_sdk(ctx).android_jar
-    proguard_specs = proguard.get_proguard_specs(ctx, packaged_resources_ctx.resource_proguard_config)
+    default_proguard_specs = [
+        f
+        for t in getattr(get_android_toolchain(ctx), "default_proguard_specs", [])
+        for f in t.files.to_list()
+    ]
+    proguard_specs = (
+        default_proguard_specs +
+        proguard.get_proguard_specs(ctx, packaged_resources_ctx.resource_proguard_config)
+    )
     desugared_lib_config = ctx.file._desugared_lib_config
 
-    # Optionally extract proguard specs embedded in the deploy JAR (META-INF/proguard/
-    # and META-INF/com.android.tools/) so they are passed to R8.
+    # Optionally extract proguard specs embedded in runtime JARs (META-INF/proguard/
+    # and META-INF/com.android.tools/) so they are passed to R8. Each JAR is processed
+    # independently to avoid META-INF clobbering from the deploy JAR merge. R8's
+    # ExtractR8Rules selects each JAR's rules the way R8 does for its own inputs.
+    r8_input_jar = deploy_jar
     if _flags.get(ctx).r8_extract_embedded_proguard_specs:
         jar_embedded_proguard = ctx.actions.declare_file(ctx.label.name + "_jar_embedded_proguard.pro")
-        jar_extractor_args = ctx.actions.args()
-        jar_extractor_args.add("--input_jar", deploy_jar)
-        jar_extractor_args.add("--output_proguard_file", jar_embedded_proguard)
+        r8_jar = get_android_toolchain(ctx).r8.files_to_run.executable
+        java_runtime = common.get_host_javabase(ctx)[java_common.JavaRuntimeInfo]
+        extract_args = ctx.actions.args()
+
+        # Runtime classpaths of large apps exceed the OS argument length limit. The
+        # java launcher only expands an argument file that also holds the main class.
+        extract_args.use_param_file("@%s", use_always = True)
+        extract_args.set_param_file_format("multiline")
+        extract_args.add("-cp", r8_jar)
+        extract_args.add("com.android.tools.r8.ExtractR8Rules")
+        extract_args.add("--rules-output", jar_embedded_proguard)
+        extract_args.add_all(runtime_jars)
         ctx.actions.run(
-            executable = get_android_toolchain(ctx).jar_embedded_proguard_extractor.files_to_run,
-            arguments = [jar_extractor_args],
-            inputs = [deploy_jar],
+            executable = java_runtime.java_executable_exec_path,
+            arguments = [extract_args],
+            inputs = depset([r8_jar], transitive = [runtime_jars, java_runtime.files]),
             outputs = [jar_embedded_proguard],
-            mnemonic = "JarEmbeddedProguardExtractor",
-            progress_message = "Extracting proguard specs from deploy jar for %{label}",
-            toolchain = None,
+            mnemonic = "ExtractR8Rules",
+            progress_message = "Extracting proguard specs from runtime jars for %{label}",
+            toolchain = "@bazel_tools//tools/jdk:toolchain_type",
         )
         proguard_specs = proguard_specs + [jar_embedded_proguard]
+
+        # R8 would also select embedded rules from the merged deploy jar, applying the
+        # extracted rules a second time.
+        r8_input_jar = ctx.actions.declare_file(ctx.label.name + "_deploy_without_embedded_rules.jar")
+        common.filter_zip_exclude(
+            ctx,
+            output = r8_input_jar,
+            input = deploy_jar,
+            filters = ["^META-INF/proguard/", "^META-INF/com\\.android\\.tools/"],
+            compression_mode = "DONT_CARE",
+        )
 
     # When --desugar_java8_libs is enabled and there are desugared
     # configs, R8 is expected to pin the min-sdk so that it matches the underlying configs.
@@ -124,7 +159,10 @@ def process_r8(ctx, validation_ctx, jvm_ctx, packaged_resources_ctx, build_info_
             else:
                 fail("minSdkVersion must be an integer")
 
-    neverlink_infos = utils.collect_providers(StarlarkAndroidNeverlinkInfo, ctx.attr.deps)
+    neverlink_infos = utils.collect_providers(
+        StarlarkAndroidNeverlinkInfo,
+        utils.get_primary_split(ctx, "deps"),
+    )
     neverlink_jars = depset(transitive = [info.transitive_neverlink_libraries for info in neverlink_infos])
 
     args = ctx.actions.args()
@@ -134,12 +172,12 @@ def process_r8(ctx, validation_ctx, jvm_ctx, packaged_resources_ctx, build_info_
     args.add_all(proguard_specs, before_each = "--pg-conf")
     args.add("--lib", android_jar)
     args.add_all(neverlink_jars, before_each = "--lib")
-    args.add(deploy_jar)  # jar to optimize + desugar + dex
+    args.add(r8_input_jar)  # jar to optimize + desugar + dex
     args.add("--pg-map-output", proguard_mappings_output_file)
     args.add("--build-metadata-output", build_metadata_output)
 
-    r8_inputs = [android_jar, deploy_jar] + proguard_specs
-    r8_outputs = [dexes_zip, proguard_mappings_output_file, build_metadata_output]
+    r8_inputs = [android_jar, r8_input_jar] + proguard_specs
+    r8_outputs = [dexes_zip, proguard_mappings_output_file, build_metadata_output, keep_radius]
     if read_possibly_native_flag(ctx, "desugar_java8_libs") and desugared_lib_config:
         args.add("--desugared-lib", desugared_lib_config)
         r8_inputs.append(desugared_lib_config)
@@ -175,7 +213,11 @@ def process_r8(ctx, validation_ctx, jvm_ctx, packaged_resources_ctx, build_info_
         inputs = depset(r8_inputs, transitive = [neverlink_jars]),
         outputs = r8_outputs,
         mnemonic = "AndroidR8",
-        jvm_flags = ["-Xmx10G", "-XX:ThreadStackSize=2048"],
+        jvm_flags = [
+            "-Xmx10G",
+            "-XX:ThreadStackSize=2048",
+            "-Dcom.android.tools.r8.dumpkeepradiustofile=" + keep_radius.path,
+        ],
         progress_message = "R8 Optimizing, Desugaring, and Dexing %{label}",
     )
 
@@ -215,6 +257,18 @@ def process_r8(ctx, validation_ctx, jvm_ctx, packaged_resources_ctx, build_info_
         java_resource_jar = java_resource_jar,
     )
 
+    report_generator = getattr(get_android_toolchain(ctx), "optimization_config_analyzer_generator", None)
+    html_report = None
+    if report_generator:
+        html_report = ctx.actions.declare_file(ctx.label.name + "_optimization_report.html")
+        proguard.generate_report(
+            ctx,
+            out = html_report,
+            keep_radius = keep_radius,
+            generator_tool = report_generator.files_to_run,
+            toolchain_type = ANDROID_TOOLCHAIN_TYPE,
+        )
+
     return ProviderInfo(
         name = "r8_ctx",
         value = struct(
@@ -223,11 +277,18 @@ def process_r8(ctx, validation_ctx, jvm_ctx, packaged_resources_ctx, build_info_
             baseline_profile_rewritten = baseline_profile_rewritten,
             dex_info = android_dex_info,
             implicit_outputs = [proguard_mappings_output_file],
+            html_report = html_report,
+            output_groups = {
+                "optimization_config_analyzer": depset([html_report]) if html_report else depset(),
+            },
             providers = [
                 android_dex_info,
                 AndroidPreDexJarInfo(pre_dex_jar = deploy_jar),
-                AndroidOptimizationInfo(r8_optimization_info = build_metadata_output),
                 ProguardMappingInfo(proguard_mapping = proguard_mappings_output_file),
+                AndroidOptimizationInfo(
+                    r8_optimization_info = build_metadata_output,
+                    optimization_analysis_report = html_report,
+                ),
             ],
         ),
     )

@@ -4,6 +4,7 @@ load("@rules_java//java:defs.bzl", "java_library")
 
 exports_files([
     "data_binding_annotation_template.txt",
+    "proguard-android-optimize.txt",
     "res_v3_dummy_AndroidManifest.xml",
     "res_v3_dummy_R.txt",
     "robolectric_properties_template.txt",
@@ -50,6 +51,7 @@ bzl_library(
     visibility = ["//:__subpackages__"],
     deps = [
         ":add_constraints_bzl",
+        ":bazel_compat_bzl",
         ":visibility_bzl",
         "//flags:bzl",
         "//providers:providers_bzl",
@@ -68,6 +70,16 @@ bzl_library(
     visibility = ["//:__subpackages__"],
     deps = [
         ":visibility_bzl",
+    ],
+)
+
+bzl_library(
+    name = "bazel_compat_bzl",
+    srcs = ["bazel_compat.bzl"],
+    visibility = ["//:__subpackages__"],
+    deps = [
+        ":visibility_bzl",
+        "@bazel_features//:features",
     ],
 )
 
@@ -155,6 +167,7 @@ bzl_library(
     srcs = ["utils.bzl"],
     visibility = ["//:__subpackages__"],
     deps = [
+        ":bazel_compat_bzl",
         ":visibility_bzl",
         "//providers:providers_bzl",
     ],
@@ -178,5 +191,12 @@ int_setting(
 # TODO: Delete this once AOSP compiler is used everywhere.
 java_library(
     name = "aidl_lib",
+    visibility = ["//visibility:public"],
+)
+
+# Empty AIDL annotations library for OSS. The SDK annotations jar containing
+# @android.annotation.Hide is not available outside google3.
+java_library(
+    name = "aidl_annotations_lib",
     visibility = ["//visibility:public"],
 )
