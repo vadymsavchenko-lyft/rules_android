@@ -56,9 +56,11 @@ public class DesugarBasicTest {
   private Path desugared;
   private Path desugaredClasspath;
   private Path desugaredWithDependencyMetadata;
+  private Path desugaredWithDependencyMetadataJson;
   private Path doubleDesugaredWithDependencyMetadata;
   private Path desugaredClasspathWithDependencyMetadata;
   private Path desugaredWithDependencyMetadataMissingInterface;
+  private ImmutableList<Path> shardedWithDependencyMetadata;
 
   @Before
   public void setup() {
@@ -76,6 +78,10 @@ public class DesugarBasicTest {
         Paths.get(
             System.getProperty(
                 "DesugarBasicTest.testdata_basic_desugared_with_dependency_metadata"));
+    desugaredWithDependencyMetadataJson =
+        Path.of(
+            System.getProperty(
+                "DesugarBasicTest.testdata_basic_desugared_with_dependency_metadata_json"));
     // Same as testdata_basic_desugared_with_dependency_metadata, but where the input is instead the
     // already desugared code (i.e., testdata_basic_desugared)
     doubleDesugaredWithDependencyMetadata =
@@ -94,6 +100,24 @@ public class DesugarBasicTest {
         Paths.get(
             System.getProperty(
                 "DesugarBasicTest.testdata_basic_desugared_with_dependency_metadata_missing_interface"));
+    // Same as testdata_basic_desugared_classpath_with_dependency_metadata, but desugaring the input
+    // twice in one invocation, with a shard for each input entry.
+    shardedWithDependencyMetadata =
+        ImmutableList.of(
+            Paths.get(
+                System.getProperty(
+                    "DesugarBasicTest.testdata_basic_sharded_1_with_dependency_metadata")),
+            Paths.get(
+                System.getProperty(
+                    "DesugarBasicTest.testdata_basic_sharded_2_with_dependency_metadata")));
+  }
+
+  @Test
+  public void shardedSameAsUnsharded() throws Exception {
+    for (Path sharded : shardedWithDependencyMetadata) {
+      assertThat(Files.readAllBytes(sharded))
+          .isEqualTo(Files.readAllBytes(desugaredClasspathWithDependencyMetadata));
+    }
   }
 
   @Test
@@ -165,6 +189,14 @@ public class DesugarBasicTest {
     }
   }
 
+  private static String extractDesugarDepsJson(Path jar) throws Exception {
+    try (ZipFile zip = new ZipFile(jar.toFile())) {
+      ZipEntry desugarDepsEntry = zip.getEntry(Desugar.DESUGAR_DEPS_FILENAME);
+      assertThat(desugarDepsEntry).isNotNull();
+      return new String(zip.getInputStream(desugarDepsEntry).readAllBytes(), UTF_8);
+    }
+  }
+
   private static String extractContextMaps(Path jar) throws Exception {
     try (ZipFile zip = new ZipFile(jar.toFile())) {
       ZipEntry contextMapEntry = zip.getEntry(Desugar.CONTEXT_MAP_FILENAME);
@@ -225,6 +257,42 @@ public class DesugarBasicTest {
                 .addExtendedInterface(classToType(I.class))
                 .build());
     assertThat(info.getMissingInterfaceCount()).isEqualTo(0);
+  }
+
+  @Test
+  public void checkDependencyMetadataJson() throws Exception {
+    String json = extractDesugarDepsJson(desugaredWithDependencyMetadataJson);
+    assertThat(json)
+        .isEqualTo(
+            """
+            {"assume_present":[\
+            {"origin":"com/google/devtools/build/android/r8/desugar/basic/A",\
+            "target":"com/google/devtools/build/android/r8/desugar/basic/I$-CC"},\
+            {"origin":"com/google/devtools/build/android/r8/desugar/basic/B",\
+            "target":"com/google/devtools/build/android/r8/desugar/basic/J$-CC"},\
+            {"origin":"com/google/devtools/build/android/r8/desugar/basic/C",\
+            "target":"com/google/devtools/build/android/r8/desugar/basic/K$-CC"}],\
+            "interface_with_supertypes":[\
+            {"origin":"com/google/devtools/build/android/r8/desugar/basic/J",\
+            "extended_interface":["com/google/devtools/build/android/r8/desugar/basic/I"]}],\
+            "interface_with_companion":[\
+            {"origin":"com/google/devtools/build/android/r8/desugar/basic/I",\
+            "num_default_methods":1},\
+            {"origin":"com/google/devtools/build/android/r8/desugar/basic/J",\
+            "num_default_methods":1},\
+            {"origin":"com/google/devtools/build/android/r8/desugar/basic/K",\
+            "num_default_methods":1}]}\
+            """);
+  }
+
+  @Test
+  public void checkInvalidDesugarDepsFormat() {
+    int exitCode =
+        Desugar.processRequest(
+            ImmutableList.of(
+                "-i", basic.toString(), "-o", basic.toString(), "--desugar_deps_format", "invalid"),
+            System.err);
+    assertThat(exitCode).isEqualTo(1);
   }
 
   @Test

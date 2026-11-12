@@ -115,7 +115,6 @@ def _process_feature_module(
         ctx,
         out_r_src_jar = ctx.actions.declare_file("R.srcjar", sibling = manifest),
         out_r_txt = ctx.actions.declare_file("R.txt", sibling = manifest),
-        out_symbols = ctx.actions.declare_file("merged.bin", sibling = manifest),
         out_manifest = ctx.actions.declare_file("AndroidManifest_processed.xml", sibling = manifest),
         out_proguard_cfg = ctx.actions.declare_file("proguard.cfg", sibling = manifest),
         out_main_dex_proguard_cfg = ctx.actions.declare_file(
@@ -133,6 +132,7 @@ def _process_feature_module(
         transitive_compiled_assets = [res.transitive_compiled_assets],
         transitive_resource_files = [res.transitive_resource_files],
         transitive_compiled_resources = [res.transitive_compiled_resources],
+        transitive_compiled_resources_with_public_xml = [res.transitive_compiled_resources_with_public_xml],
         transitive_r_txts = [res.transitive_r_txts],
         additional_apks_to_link_against = [base_apk],
         proto_format = True,  # required for aab.
@@ -189,7 +189,6 @@ def _create_feature_manifest(
         args.add(java_package)
         args.add(info.feature_name)
         args.add(info.title_id)
-        args.add(info.fused)
         args.add(aapt2.executable)
 
         ctx.actions.run(
@@ -201,7 +200,7 @@ def _create_feature_manifest(
                 aapt2,
             ],
             mnemonic = "GenFeatureManifest",
-            progress_message = "Generating AndroidManifest.xml for " + feature_target.label.name,
+            progress_message = "Generating AndroidManifest.xml %{output}",
             toolchain = None,
         )
         return manifest
@@ -230,7 +229,7 @@ def _create_feature_manifest(
             aapt2,
         ],
         mnemonic = "GenPriorityFeatureManifest",
-        progress_message = "Generating Priority AndroidManifest.xml for " + feature_target.label.name,
+        progress_message = "Generating Priority AndroidManifest.xml %{output}",
         toolchain = None,
     )
 
@@ -376,7 +375,7 @@ def _impl(ctx):
         is_executable = True,
     )
 
-    return [
+    providers = [
         ctx.attr.base_module[ApkInfo],
         ctx.attr.base_module[AndroidPreDexJarInfo],
         AndroidBundleInfo(unsigned_aab = ctx.outputs.unsigned_aab),
@@ -388,6 +387,12 @@ def _impl(ctx):
             ] + deploy_script_files, transitive_files = java_runtime.files),
         ),
     ]
+
+    # Pass through AndroidOptimizationInfo from base module, if optimization analysis was performed.
+    if AndroidOptimizationInfo in ctx.attr.base_module:
+        providers.append(ctx.attr.base_module[AndroidOptimizationInfo])
+
+    return providers
 
 android_application = rule(
     attrs = ANDROID_APPLICATION_ATTRS,

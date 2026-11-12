@@ -18,13 +18,12 @@ load("//rules:visibility.bzl", "PROJECT_VISIBILITY")
 load("//rules/flags:flags.bzl", "read_possibly_native_flag")
 load("@rules_java//java/common:java_info.bzl", "JavaInfo")
 load("@bazel_skylib//lib:partial.bzl", "partial")
-load(":acls.bzl", "acls")
 load(":attrs.bzl", _attrs = "attrs")
 load(":desugar.bzl", _desugar = "desugar")
 load(":dex.bzl", _dex = "dex")
 load(":dex_toolchains.bzl", "dex_toolchains")
 load(":min_sdk_version.bzl", _min_sdk_version = "min_sdk_version")
-load(":utils.bzl", "ANDROID_SDK_TOOLCHAIN_TYPE", _get_android_sdk = "get_android_sdk", _utils = "utils")
+load(":utils.bzl", "ANDROID_SDK_TOOLCHAIN_TYPE", "ANDROID_TOOLCHAIN_TYPE", "get_android_toolchain", _utils = "utils")
 load("//rules/flags:flags.bzl", _flags = "flags")
 
 visibility(PROJECT_VISIBILITY)
@@ -58,18 +57,10 @@ def get_aspect_deps(ctx):
     """
     deps_list = []
     for attr in _ATTR_ASPECTS:
-        # android_binary's deps attr has a split transition, so when
-        # this is called from android_binary, deps should be accessed
-        # via ctx.split_attr instead of ctx.attr to ensure that the same
-        # branch of the split is used throughout the build. An aspect's
-        # ctx doesn't have split_attr, so access that via ctx.attr when
-        # this is called from the aspect impl.
-        if attr == "deps" and hasattr(ctx, "split_attr"):
-            deps = _utils.dedupe_split_attr(ctx.split_attr.deps)
-        elif attr == "_toolchain" and getattr(ctx, "kind", "") == "kt_jvm_toolchain":
+        if attr == "_toolchain" and getattr(ctx, "kind", "") == "kt_jvm_toolchain":
             pass  # TODO(b/370300302): Prevent double-deps on Kotlin toolchain. Delete when fixed.
         else:
-            deps = getattr(ctx.attr, attr, [])
+            deps = _utils.get_primary_split(ctx, attr)
 
         if str(type(deps)) == "list":
             deps_list += deps
@@ -105,10 +96,8 @@ def _get_desugar_classpath(ctx, target):
     if (_flags.get(ctx).experimental_prune_desugar_classpath and
         _PRUNE_DESUGAR_DEPS_INCOMPATIBLE_TAG not in getattr(ctx.rule.attr, "tags", [])):
         return _prune_desugar_classpath(ctx)
-    java_info = target[JavaInfo]
-    if acls.in_desugaring_runtime_jar_classpath_rollout():
-        return java_info._transitive_full_compile_time_jars
-    return java_info.transitive_compile_time_jars
+    # Lyft fork: header jars, unlike upstream's full compile-time jars (reverted in 652ec2b).
+    return target[JavaInfo].transitive_compile_time_jars
 
 def _aspect_impl(target, ctx):
     """Adapts the rule and target data.
@@ -135,7 +124,7 @@ def _aspect_impl(target, ctx):
 
     dex_archives_dict = {}
     runtime_jars = _get_produced_runtime_jars(target, ctx, extra_toolchain_jars)
-    bootclasspath = _get_boot_classpath(target, ctx)
+    bootclasspath = _desugar.get_boot_classpath(target, ctx)
     desugar_classpath = _get_desugar_classpath(ctx, target) if JavaInfo in target else depset([])
 
     bt = ctx.attr._bytecode_transformer
@@ -152,7 +141,7 @@ def _aspect_impl(target, ctx):
 
                 # Optionally transform the jar before desugaring
                 if bytecode_transformer:
-                    jar_to_desugar = _dex.get_dx_artifact(ctx, (jar.path if basename_clash else jar.basename) + "_injected.jar", min_sdk_version)
+                    jar_to_desugar = _dex.get_dx_artifact(ctx, (jar.short_path if basename_clash else jar.basename) + "_injected.jar", min_sdk_version)
                     partial.call(
                         bytecode_transformer.transformer_fn,
                         ctx,
@@ -168,8 +157,9 @@ def _aspect_impl(target, ctx):
                     bootclasspath = bootclasspath,
                     classpath = desugar_classpath,
                     min_sdk_version = min_sdk_version,
-                    desugar_exec = ctx.executable._desugar_java8,
+                    desugar_exec = get_android_toolchain(ctx).desugar.files_to_run,
                     desugared_lib_config = ctx.file._desugared_lib_config,
+                    toolchain_type = ANDROID_TOOLCHAIN_TYPE,
                 )
             else:
                 desugared_jar = None
@@ -186,7 +176,8 @@ def _aspect_impl(target, ctx):
                     output = dex,
                     incremental_dexopts = incremental_dexopts_list,
                     min_sdk_version = min_sdk_version,
-                    dex_exec = ctx.executable._dexbuilder,
+                    dex_exec = get_android_toolchain(ctx).dexbuilder.files_to_run,
+                    toolchain_type = ANDROID_TOOLCHAIN_TYPE,
                 )
 
                 dex_archive = struct(
@@ -240,19 +231,6 @@ def _get_platform_based_toolchain_jars(ctx):
 def _get_aspect_dexopts():
     return _power_set(_dex.normalize_dexopts(_dex.DEXOPTS_SUPPORTED_IN_INCREMENTAL_DEXING))
 
-def _get_boot_classpath(target, ctx):
-    if JavaInfo in target:
-        compilation_info = target[JavaInfo].compilation_info
-        if compilation_info and compilation_info.boot_classpath:
-            return compilation_info.boot_classpath
-
-    android_jar = _get_android_sdk(ctx).android_jar
-    if android_jar:
-        return [android_jar]
-
-    # This shouldn't ever be reached, but if it is, we should be clear about the error.
-    fail("No compilation info or android jar!")
-
 def _check_basename_clash(artifacts):
     seen = {}
     for artifact in artifacts:
@@ -300,21 +278,9 @@ dex_desugar_aspect = aspect(
                     "//rules/flags:bytecode_transformer",
                 ),
             ),
-            "_desugar_java8": attr.label(
-                default = Label("//tools/android:desugar_java8"),
-                allow_files = True,
-                cfg = "exec",
-                executable = True,
-            ),
             "_desugared_lib_config": attr.label(
                 allow_single_file = True,
                 default = Label("//tools/android:full_desugar_jdk_libs_config_json"),
-            ),
-            "_dexbuilder": attr.label(
-                default = Label("//tools/android:dexbuilder"),
-                allow_files = True,
-                cfg = "exec",
-                executable = True,
             ),
             "_flags": attr.label(
                 default = Label("//rules/flags"),
@@ -327,6 +293,7 @@ dex_desugar_aspect = aspect(
     fragments = ["android"],
     toolchains = [
         ANDROID_SDK_TOOLCHAIN_TYPE,
+        ANDROID_TOOLCHAIN_TYPE,
     ],
     required_aspect_providers = [[JavaInfo]],
     **_opt_kwargs()

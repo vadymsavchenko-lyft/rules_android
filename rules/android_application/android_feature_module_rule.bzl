@@ -45,7 +45,7 @@ def _impl(ctx):
     else:
         args.add("")
     args.add(ctx.attr.binary[ApkInfo].unsigned_apk.path)
-    args.add(utils.dedupe_split_attr(ctx.split_attr.library).label)
+    args.add(utils.get_primary_split(ctx, "library").label)
     args.add(get_android_toolchain(ctx).xmllint_tool.files_to_run.executable)
     args.add(get_android_toolchain(ctx).unzip_tool.files_to_run.executable)
     args.add(ctx.attr.is_asset_pack)
@@ -60,22 +60,28 @@ def _impl(ctx):
             get_android_toolchain(ctx).unzip_tool.files_to_run.executable,
         ],
         mnemonic = "ValidateFeatureModule",
-        progress_message = "Validating feature module %s" % str(ctx.label),
+        progress_message = "Validating feature module %{label}",
         toolchain = None,
     )
+
+    output_groups = dict(
+        _validation = depset([validation]),
+    )
+    transitive_validations = utils.collect_transitive_validations(ctx)
+    if transitive_validations != None:
+        output_groups["_validation_transitive"] = transitive_validations
 
     return [
         AndroidFeatureModuleInfo(
             binary = ctx.attr.binary,
-            library = utils.dedupe_split_attr(ctx.split_attr.library),
+            library = utils.get_primary_split(ctx, "library"),
             title_id = ctx.attr.title_id,
             title_lib = ctx.attr.title_lib,
             feature_name = ctx.attr.feature_name,
-            fused = ctx.attr.fused,
             manifest = ctx.file.manifest,
             is_asset_pack = ctx.attr.is_asset_pack,
         ),
-        OutputGroupInfo(_validation = depset([validation])),
+        OutputGroupInfo(**output_groups),
     ]
 
 android_feature_module = rule(
@@ -123,8 +129,8 @@ def android_feature_module_macro(_android_binary, _android_library, **attrs):
         if not getattr(attrs, attr, None):
             fail("%s missing required attr <%s>" % (fqn, attr))
 
-    if hasattr(attrs, "fused") and hasattr(attrs, "manifest"):
-        fail("%s cannot specify <fused> and <manifest>. Prefer <manifest>")
+    if hasattr(attrs, "fused"):
+        fail("%s cannot specify <fused>, legacy and unsupported attributed. Use a <manifest> to change fusing behavior." % fqn)
 
     targets = get_feature_module_paths(fqn)
 
@@ -200,7 +206,6 @@ EOF
         title_id = title_id,
         title_lib = str(targets.title_lib),
         feature_name = getattr(attrs, "feature_name", attrs.name),
-        fused = getattr(attrs, "fused", True),
         manifest = getattr(attrs, "manifest", None),
         tags = tags,
         transitive_configs = transitive_configs,

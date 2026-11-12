@@ -148,7 +148,7 @@ def host_jvm_path(ctx):
     """
     return str(ctx.attr._host_java_runtime[java_common.JavaRuntimeInfo].java_executable_exec_path)
 
-def dex(ctx, jar, out_dex_shards, deps = None):
+def dex(ctx, jar, out_dex_shards, deps = None, bootclasspath = None):
     """Desugar, dex and shard a Jar.
 
     Args:
@@ -158,12 +158,16 @@ def dex(ctx, jar, out_dex_shards, deps = None):
         is given, will shard the Jar to Dex across all given files in a
         deterministic manner.
       deps: The list of dependencies for the Jar being desugared.
+      bootclasspath: The list of bootclasspath entries for the Jar being
+        desugared. Defaults to the android.jar from the _android_sdk attr.
     """
     min_sdk = _min_sdk_version.DEX_DESUGAR
     args = ctx.actions.args()
     args.use_param_file(param_file_arg = "-flagfile=%s", use_always = True)
 
-    args.add("-android_jar", first(ctx.files._android_sdk))
+    if not bootclasspath:
+        bootclasspath = [first(ctx.files._android_sdk)]
+    args.add_joined("-bootclasspath", bootclasspath, join_with = ",")
     if deps:
         args.add_joined("-classpath", deps, join_with = ",")
     args.add("-desugar_core_libs", "True")
@@ -185,12 +189,17 @@ def dex(ctx, jar, out_dex_shards, deps = None):
         "-Xmx8g",
     ]
 
+    launcher_args = ctx.actions.args()
+    launcher_args.add_all(jvm_flags)
+    launcher_args.add("-jar")
+    launcher_args.add(ctx.executable._desugar_dex_sharding)
+
     ctx.actions.run(
         executable = java,
         tools = [ctx.executable._desugar_dex_sharding],
-        arguments = jvm_flags + ["-jar", ctx.executable._desugar_dex_sharding.path, args],
+        arguments = [launcher_args, args],
         inputs = depset(
-            ctx.files._android_sdk + ctx.files._mi_host_javabase + [jar, ctx.file._desugared_lib_config],
+            [jar, ctx.file._desugared_lib_config] + bootclasspath + ctx.files._mi_host_javabase,
             transitive = [deps] if deps else [],
         ),
         outputs = out_dex_shards,
@@ -200,6 +209,7 @@ def dex(ctx, jar, out_dex_shards, deps = None):
             "worker-key-mnemonic": "DesugarDexSharding",
             "supports-workers": "1",
             "supports-multiplex-workers": "1",
+            "supports-path-mapping": "1",
         },
         toolchain = None,
     )
@@ -275,7 +285,7 @@ def merge_dex_shards(
     args = ctx.actions.args()
 
     args.add("--multidex", "best_effort")
-    args.add("--output", out_dex_zip.path)
+    args.add("--output", out_dex_zip)
     args.add_all(dex_archives, before_each = "--input")
     args.use_param_file(param_file_arg = "@%s", use_always = True)
     args.set_param_file_format("multiline")
@@ -288,6 +298,7 @@ def merge_dex_shards(
         outputs = [out_dex_zip],
         mnemonic = "DexMerge",
         progress_message = "MI Merging dexes",
+        execution_requirements = {"supports-path-mapping": "1"},
         toolchain = None,
     )
 
@@ -337,7 +348,7 @@ def _extract_package_name(ctx, apk, package_name_output_file):
         inputs = [apk],
         outputs = [package_name_output_file],
         mnemonic = "ExtractPackageName",
-        progress_message = "MI Extracts the package name from %s" % apk.path,
+        progress_message = "MI Extracts the package name from %{input}",
     )
 
 def _get_extension_registry_class_jar(target):

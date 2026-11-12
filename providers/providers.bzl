@@ -105,7 +105,7 @@ AndroidFeatureModuleInfo = provider(
     fields = dict(
         binary = "String, target of the underlying split android_binary target",
         feature_name = "String, the name of the feature module. If unspecified, the target name will be used.",
-        fused = "Boolean, whether the split is \"fused\" for the system image and for pre-L devices.",
+        fused = "Deprecated and unused. Boolean, whether the split is \"fused\" for the system image and for pre-L devices.",
         library = "String, target of the underlying split android_library target",
         manifest = "Optional AndroidManifest.xml file to use for this feature.",
         min_sdk_version = "String, the min SDK version for this feature.",
@@ -224,6 +224,7 @@ AndroidOptimizationInfo = provider(
     fields = dict(
         d8_optimization_info = "Metadata produced by D8 about the applied optimizations in a JSON format.",
         r8_optimization_info = "Metadata produced by R8 about the applied optimizations in a JSON format.",
+        optimization_analysis_report = "HTML report produced by the optimization configuration analyzer.",
     ),
 )
 

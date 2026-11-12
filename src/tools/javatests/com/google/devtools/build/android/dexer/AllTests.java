@@ -21,5 +21,6 @@ import org.junit.runners.Suite;
 @Suite.SuiteClasses({
   DexFileSplitterTest.class,
   DexLimitTrackerTest.class,
+  ZipEntryComparatorTest.class,
 })
 public class AllTests {}

@@ -13,7 +13,6 @@
 # limitations under the License.
 """Shared logic related to desugaring. """
 
-load("//rules:acls.bzl", "acls")
 load("//rules:visibility.bzl", "PROJECT_VISIBILITY")
 load("//rules/flags:flags.bzl", _flags = "flags")
 load("@rules_java//java/common:java_info.bzl", "JavaInfo")
@@ -35,7 +34,5 @@ def get_desugar_classpath(ctx, target):
     if (_flags.get(ctx).experimental_prune_desugar_classpath and
         _PRUNE_DESUGAR_DEPS_INCOMPATIBLE_TAG not in getattr(ctx.rule.attr, "tags", [])):
         return _prune_desugar_classpath(ctx)
-    java_info = target[JavaInfo]
-    if acls.in_desugaring_runtime_jar_classpath_rollout():
-        return java_info._transitive_full_compile_time_jars
-    return java_info.transitive_compile_time_jars
+    # Lyft fork: header jars, unlike upstream's full compile-time jars (reverted in 652ec2b).
+    return target[JavaInfo].transitive_compile_time_jars

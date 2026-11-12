@@ -63,7 +63,7 @@ def _process(
         java_resources_zip = None,
         compress_java_resources = True,
         nocompress_extensions = [],
-        output_jar_creator = "",
+        output_jar_creator = "bazel",
         signing_keys = [],
         signing_lineage = None,
         signing_key_rotation_min_sdk = None,
@@ -207,7 +207,7 @@ def _build_apk(
         java_resources_zip = None,
         compress_java_resources = False,
         nocompress_extensions = [],
-        output_jar_creator = None,
+        output_jar_creator = "bazel",
         resource_extractor = None,
         toolchain_type = None,
         java_toolchain = None):
@@ -237,6 +237,16 @@ def _build_apk(
             path = "%s:lib/%s/%s" % (native_lib.path, architecture, native_lib.basename)
             resources.append(native_lib)
             resource_paths.append(path)
+
+    if "hwasan" in ctx.features:
+        wrap_sh = ctx.actions.declare_file(ctx.label.name + "_hwasan_wrap.sh")
+        ctx.actions.write(
+            output = wrap_sh,
+            content = "#!/system/bin/sh\nLD_HWASAN=1 exec \"$@\"\n",
+            is_executable = True,
+        )
+        resources.append(wrap_sh)
+        resource_paths.append("%s:lib/arm64-v8a/wrap.sh" % wrap_sh.path)
 
     java.singlejar(
         ctx,
@@ -426,7 +436,7 @@ def _create_deploy_info(
         arguments = [args],
         outputs = [deploy_info],
         mnemonic = "WriteDeployInfo",
-        progress_message = "Writing Deploy info proto file %s" % deploy_info.short_path,
+        progress_message = "Writing Deploy info proto file %{output}",
         toolchain = toolchain_type,
     )
 

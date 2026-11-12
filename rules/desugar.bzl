@@ -13,8 +13,10 @@
 # limitations under the License.
 """Bazel Desugar Commands."""
 
+load("//rules:utils.bzl", "get_android_sdk")
 load("//rules:visibility.bzl", "PROJECT_VISIBILITY")
 load("//rules/flags:flags.bzl", "read_possibly_native_flag")
+load("@rules_java//java/common:java_info.bzl", "JavaInfo")
 
 visibility(PROJECT_VISIBILITY)
 
@@ -48,8 +50,7 @@ def _desugar(
     args.use_param_file("@%s", use_always = True)  # Required for workers.
     args.set_param_file_format("multiline")
 
-    # Explicitly calls input.path here to work around b/310015642
-    args.add("--input", input.path)
+    args.add("--input", input)
     args.add("--output", output)
     args.add_all(classpath, before_each = "--classpath_entry")
     args.add_all(bootclasspath, before_each = "--bootclasspath_entry")
@@ -76,12 +77,39 @@ def _desugar(
         executable = desugar_exec,
         arguments = [args],
         mnemonic = "Desugar",
-        progress_message = "Desugaring " + input.short_path + " for Android",
-        execution_requirements = {"supports-workers": "1"},
+        progress_message = "Desugaring %{input} for Android",
+        execution_requirements = {"supports-workers": "1", "supports-path-mapping": "1"},
         use_default_shell_env = True,
         toolchain = toolchain_type,
     )
 
+def _get_boot_classpath(target, ctx):
+    """Returns the bootclasspath to use when desugaring the target.
+
+    Prefers the bootclasspath the target was compiled against, falling back to
+    the android.jar from the Android SDK toolchain. The calling rule or aspect
+    must request the Android SDK toolchain.
+
+    Args:
+      target: The target.
+      ctx: The context.
+
+    Returns:
+      A list of Files.
+    """
+    if JavaInfo in target:
+        compilation_info = target[JavaInfo].compilation_info
+        if compilation_info and compilation_info.boot_classpath:
+            return compilation_info.boot_classpath
+
+    android_jar = get_android_sdk(ctx).android_jar
+    if android_jar:
+        return [android_jar]
+
+    # This shouldn't ever be reached, but if it is, we should be clear about the error.
+    fail("No compilation info or android jar!")
+
 desugar = struct(
     desugar = _desugar,
+    get_boot_classpath = _get_boot_classpath,
 )

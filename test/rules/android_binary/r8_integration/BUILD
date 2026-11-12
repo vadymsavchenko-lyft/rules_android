@@ -6,7 +6,13 @@ load(
 )
 load("@rules_python//python:py_test.bzl", "py_test")
 load("@rules_shell//shell:sh_library.bzl", "sh_library")
-load(":test.bzl", "r8_neverlink_deps_test")
+load(
+    ":test.bzl",
+    "r8_default_proguard_specs_test",
+    "r8_embedded_rules_not_filtered_test",
+    "r8_implicit_outputs_test",
+    "r8_neverlink_deps_test",
+)
 
 py_test(
     name = "r8_integration_test",
@@ -24,8 +30,23 @@ py_test(
     ],
 )
 
+r8_implicit_outputs_test(
+    name = "r8_implicit_outputs_test",
+    target_under_test = "//test/rules/android_binary/r8_integration/java/com/neverlink:android_binary_with_neverlink_deps",
+)
+
+r8_default_proguard_specs_test(
+    name = "r8_default_proguard_specs_test",
+    target_under_test = "//test/rules/android_binary/r8_integration/java/com/neverlink:android_binary_with_neverlink_deps",
+)
+
 r8_neverlink_deps_test(
     name = "r8_neverlink_deps_test",
+    target_under_test = "//test/rules/android_binary/r8_integration/java/com/neverlink:android_binary_with_neverlink_deps",
+)
+
+r8_embedded_rules_not_filtered_test(
+    name = "r8_embedded_rules_not_filtered_test",
     target_under_test = "//test/rules/android_binary/r8_integration/java/com/neverlink:android_binary_with_neverlink_deps",
 )
 
@@ -63,4 +84,15 @@ script_test(
         "//test/bashunit",
         "@rules_shell//shell/runfiles",
     ],
+)
+
+filegroup(
+    name = "optimization_config_analyzer_report",
+    srcs = ["//test/rules/android_binary/r8_integration/java/com/basicapp:basic_app_R8_shrink"],
+    output_group = "optimization_config_analyzer",
+)
+
+build_test(
+    name = "optimization_config_analyzer_report_test",
+    targets = [":optimization_config_analyzer_report"],
 )

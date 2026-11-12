@@ -111,7 +111,7 @@ def _process_resources(ctx, manifest_ctx, java_package, **unused_ctxs):
         should_throw_on_conflict = not acls.in_allow_resource_conflicts(str(ctx.label)),
         enable_data_binding = ctx.attr.enable_data_binding,
         enable_manifest_merging = ctx.attr._enable_manifest_merging,
-        deps = utils.dedupe_split_attr(ctx.split_attr.deps),
+        deps = utils.get_primary_split(ctx, "deps"),
         resource_apks = resource_apks,
         instruments = ctx.attr.instruments,
         build_java_with_final_resources = acls.in_force_final_android_binary_resources(str(ctx.label)),
@@ -198,7 +198,7 @@ def _process_data_binding(ctx, java_package, packaged_resources_ctx, **_unused_c
             java_package = java_package,
             layout_info = packaged_resources_ctx.data_binding_layout_info,
             artifact_type = "APPLICATION",
-            deps = utils.collect_providers(DataBindingV2Info, utils.dedupe_split_attr(ctx.split_attr.deps)),
+            deps = utils.collect_providers(DataBindingV2Info, utils.get_primary_split(ctx, "deps")),
             data_binding_exec = get_android_toolchain(ctx).data_binding_exec.files_to_run,
             data_binding_annotation_processor =
                 get_android_toolchain(ctx).data_binding_annotation_processor[JavaPluginInfo],
@@ -218,7 +218,7 @@ def _process_jvm(ctx, db_ctx, packaged_resources_ctx, proto_ctx, stamp_ctx, **_u
         javac_opts = ctx.attr.javacopts + db_ctx.javac_opts,
         r_java = packaged_resources_ctx.r_java,
         enable_deps_without_srcs = True,
-        deps = utils.collect_providers(JavaInfo, utils.dedupe_split_attr(ctx.split_attr.deps) + stamp_ctx.deps),
+        deps = utils.collect_providers(JavaInfo, utils.get_primary_split(ctx, "deps") + stamp_ctx.deps),
         plugins =
             utils.collect_providers(JavaPluginInfo, ctx.attr.plugins) +
             db_ctx.java_plugins,
@@ -401,8 +401,13 @@ def _process_dex(ctx, validation_ctx, packaged_resources_ctx, manifest_ctx, depl
     )
     providers.append(AndroidPreDexJarInfo(pre_dex_jar = binary_jar))
 
-    if build_metadata_output != None:
-        providers.append(AndroidOptimizationInfo(d8_optimization_info = build_metadata_output))
+    if build_metadata_output != None or optimize_ctx.html_report != None:
+        providers.append(
+            AndroidOptimizationInfo(
+                d8_optimization_info = build_metadata_output,
+                optimization_analysis_report = optimize_ctx.html_report,
+            ),
+        )
 
     if postprocessing_output_map:
         providers.append(ProguardMappingInfo(proguard_mapping = postprocessing_output_map))
@@ -441,7 +446,7 @@ def _process_deploy_jar(ctx, validation_ctx, stamp_ctx, manifest_ctx, jvm_ctx, b
 
     if ctx.configuration.coverage_enabled and hasattr(ctx.attr, "_jacoco_runtime"):
         # In offline instrumentation mode, we add the Jacoco runtime to the classpath.
-        binary_runtime_jars.extend(ctx.attr._jacoco_runtime[DefaultInfo].files.to_list())
+        binary_runtime_jars.extend(ctx.attr._jacoco_runtime[JavaInfo].runtime_output_jars)
 
     info = _dex.merge_infos(utils.collect_providers(StarlarkAndroidDexInfo, _get_dex_desugar_aspect_deps(ctx)))
     incremental_dexopts = _dex.filter_dexopts(ctx.attr.dexopts, _dex.DEXOPTS_SUPPORTED_IN_INCREMENTAL_DEXING)
@@ -479,7 +484,10 @@ def _process_deploy_jar(ctx, validation_ctx, stamp_ctx, manifest_ctx, jvm_ctx, b
         # resource JARs.
         # TODO(b/69552500): Instead, handle this properly so R JARs aren't put on the classpath
         # for both binaries and libraries.
-        library_r_jar_dict = {jar: True for jar in _get_library_r_jars(ctx.attr.deps)}
+        library_r_jar_dict = {
+            jar: True
+            for jar in _get_library_r_jars(utils.get_primary_split(ctx, "deps"))
+        }
         transitive_runtime_jars_for_archive = [jar for jar in java_info.transitive_runtime_jars.to_list() if jar not in library_r_jar_dict]
         for jar in transitive_runtime_jars_for_archive:
             desugared_jars.append(desugar_dict.get(jar, jar))
@@ -568,6 +576,9 @@ def finalize(
       The list of providers the android_binary rule should return.
     """
     output_groups["_validation"] = depset(validation_outputs)
+    transitive_validations = utils.collect_transitive_validations(ctx)
+    if transitive_validations != None:
+        output_groups["_validation_transitive"] = transitive_validations
 
     output_groups["_hidden_top_level_INTERNAL_"] = depset(
         direct = [
@@ -575,7 +586,7 @@ def finalize(
         ] if deploy_ctx.one_version_enforcement_output else [],
         transitive = [info["_hidden_top_level_INTERNAL_"] for info in utils.collect_providers(
             OutputGroupInfo,
-            utils.dedupe_split_attr(ctx.split_attr.deps),
+            utils.get_primary_split(ctx, "deps"),
         )],
     )
     providers.extend(
@@ -630,33 +641,34 @@ def _process_baseline_profiles(ctx, validation_ctx, deploy_ctx, **_unused_ctxs):
         if ctx.files.startup_profiles and not (enable_optimizer_integration or validation_ctx.use_r8):
             fail("Target %s is not allowed to set startup_profiles." % str(ctx.label))
 
-        # Include startup profiles if the optimizer is disabled since profiles won't be merged
-        # in the optimizer. R8 doesn't merge them into the rewritten baseline profile either.
-        startup_profiles = ctx.files.startup_profiles if (enable_optimizer_integration and not has_proguard_specs) or validation_ctx.use_r8 else []
-        if ctx.attr.baseline_profiles_override:
-            transitive_profiles = depset(ctx.files.baseline_profiles_override + startup_profiles)
-        else:
-            transitive_profiles = depset(
-                startup_profiles,
-                transitive = [
-                    profile_provider.files
-                    for profile_provider in utils.collect_providers(
-                        BaselineProfileProvider,
-                        ctx.attr.deps,
-                    )
-                ],
+        if has_proguard_specs:
+            # Include startup profiles if optimizer integration is disabled since profiles won't be
+            # merged in the optimizer. R8 doesn't merge them into the rewritten baseline profile either.
+            startup_profiles = ctx.files.startup_profiles if not enable_optimizer_integration else []
+            if ctx.attr.baseline_profiles_override:
+                transitive_profiles = depset(ctx.files.baseline_profiles_override + startup_profiles)
+            else:
+                transitive_profiles = depset(
+                    startup_profiles,
+                    transitive = [
+                        profile_provider.files
+                        for profile_provider in utils.collect_providers(
+                            BaselineProfileProvider,
+                            utils.get_primary_split(ctx, "deps"),
+                        )
+                    ],
+                )
+            baseline_profile_output = _baseline_profiles.process(
+                ctx,
+                transitive_profiles = transitive_profiles,
+                startup_profiles = ctx.files.startup_profiles,
+                deploy_jar = getattr(deploy_ctx, "deploy_jar", None),
+                has_proguard_specs = has_proguard_specs,
+                enable_optimizer_integration = enable_optimizer_integration,
+                merge_tool = get_android_toolchain(ctx).merge_baseline_profiles_tool.files_to_run,
+                profgen = get_android_toolchain(ctx).profgen.files_to_run,
+                toolchain_type = ANDROID_TOOLCHAIN_TYPE,
             )
-        baseline_profile_output = _baseline_profiles.process(
-            ctx,
-            transitive_profiles = transitive_profiles,
-            startup_profiles = ctx.files.startup_profiles,
-            deploy_jar = getattr(deploy_ctx, "deploy_jar", None),
-            has_proguard_specs = has_proguard_specs,
-            enable_optimizer_integration = enable_optimizer_integration,
-            merge_tool = get_android_toolchain(ctx).merge_baseline_profiles_tool.files_to_run,
-            profgen = get_android_toolchain(ctx).profgen.files_to_run,
-            toolchain_type = ANDROID_TOOLCHAIN_TYPE,
-        )
     return ProviderInfo(
         name = "bp_ctx",
         value = struct(
@@ -680,7 +692,11 @@ def _process_art_profile(ctx, validation_ctx, bp_ctx, dex_ctx, optimize_ctx, r8_
                 toolchain_type = ANDROID_TOOLCHAIN_TYPE,
             )
             providers.append(art_profile_info)
-    elif ctx.attr.generate_art_profile:
+    elif (
+        ctx.attr.generate_art_profile and
+        bool(ctx.files.proguard_specs) and
+        bp_ctx.baseline_profile_output
+    ):
         merged_baseline_profile = bp_ctx.baseline_profile_output.baseline_profile
         merged_baseline_profile_rewritten = \
             optimize_ctx.proguard_output.baseline_profile_rewritten if optimize_ctx.proguard_output else None
@@ -732,7 +748,10 @@ def _process_optimize(ctx, validation_ctx, deploy_ctx, packaged_resources_ctx, b
         return ProviderInfo(
             name = "optimize_ctx",
             value = struct(
-                proguard_output = proguard.create_empty_proguard_output(ctx, proguard_output_jar),
+                proguard_output = proguard.create_empty_proguard_output(
+                    ctx,
+                    proguard_output_jar = proguard_output_jar,
+                ),
                 resources_apk = None,
                 providers = [],
             ),
@@ -789,8 +808,9 @@ def _process_optimize(ctx, validation_ctx, deploy_ctx, packaged_resources_ctx, b
     else:
         proguard_output_jar = ctx.actions.declare_file(ctx.label.name + "_proguard.jar")
         proguard_output_config = ctx.actions.declare_file(ctx.label.name + "_proguard.config")
-    proguard_seeds = ctx.actions.declare_file(ctx.label.name + "_proguard.seeds")
+    keep_radius = ctx.actions.declare_file(ctx.label.name + "_keep_radius.pb")
     proguard_usage = ctx.actions.declare_file(ctx.label.name + "_proguard.usage")
+    proguard_why_keeping_file = ctx.actions.declare_file(ctx.label.name + "_proguard.why_keeping")
 
     startup_profile = None
     baseline_profile = None
@@ -827,8 +847,9 @@ def _process_optimize(ctx, validation_ctx, deploy_ctx, packaged_resources_ctx, b
         proguard_output_config = proguard_output_config,
         proguard_mapping = ctx.file.proguard_apply_mapping,
         proguard_output_map = proguard_output_map,
-        proguard_seeds = proguard_seeds,
+        keep_radius = keep_radius,
         proguard_usage = proguard_usage,
+        proguard_why_keeping_file = proguard_why_keeping_file,
         startup_profile = startup_profile,
         baseline_profile = baseline_profile,
         resource_files = packaged_resources_ctx.validation_result if enable_rewrite_resources_through_optimizer else None,
@@ -841,8 +862,9 @@ def _process_optimize(ctx, validation_ctx, deploy_ctx, packaged_resources_ctx, b
             [
                 proguard_output.output_jar,
                 proguard_output.config,
-                proguard_output.seeds,
+                proguard_output.keep_radius,
                 proguard_output.usage,
+                proguard_output.why_keeping_file,
             ],
         )
 
@@ -891,6 +913,18 @@ def _process_optimize(ctx, validation_ctx, deploy_ctx, packaged_resources_ctx, b
     if not optimized_resources_apk and enable_resource_shrinking:
         optimized_resources_apk = shrunk_resource_output.resources_apk
 
+    report_generator = getattr(get_android_toolchain(ctx), "optimization_config_analyzer_generator", None)
+    html_report = None
+    if proguard_output.keep_radius and report_generator:
+        html_report = ctx.actions.declare_file(ctx.label.name + "_optimization_report.html")
+        proguard.generate_report(
+            ctx,
+            out = html_report,
+            keep_radius = proguard_output.keep_radius,
+            generator_tool = report_generator.files_to_run,
+            toolchain_type = ANDROID_TOOLCHAIN_TYPE,
+        )
+
     return ProviderInfo(
         name = "optimize_ctx",
         value = struct(
@@ -898,6 +932,10 @@ def _process_optimize(ctx, validation_ctx, deploy_ctx, packaged_resources_ctx, b
             resources_apk = optimized_resources_apk,
             providers = [],
             implicit_outputs = implicit_outputs,
+            html_report = html_report,
+            output_groups = {
+                "optimization_config_analyzer": depset([html_report]) if html_report else depset(),
+            },
         ),
     )
 
@@ -983,7 +1021,10 @@ def _process_apk_packaging(ctx, packaged_resources_ctx, native_libs_ctx, dex_ctx
     )
 
 def _process_idl(ctx, **_unused_ctxs):
-    deps = utils.collect_providers(AndroidIdlInfo, ctx.attr.deps)
+    deps = utils.collect_providers(
+        AndroidIdlInfo,
+        utils.get_primary_split(ctx, "deps"),
+    )
 
     android_idl_info = AndroidIdlInfo(
         transitive_idl_import_roots = depset(

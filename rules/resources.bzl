@@ -226,7 +226,7 @@ def _add_g3itr(
         inputs = [manifest, instrument_xslt],
         outputs = [out_manifest],
         mnemonic = "AddG3ITRStarlark",
-        progress_message = "Adding G3ITR to test manifest for %s" % ctx.label,
+        progress_message = "Adding G3ITR to test manifest for %{label}",
         toolchain = None,
     )
 
@@ -496,7 +496,6 @@ def _package(
         should_compile_java_srcs = True,
         generate_minsdk_proguard_config = False,
         build_java_with_final_resources = False,
-        generate_out_symbols = True,
         generate_resource_files_zip = True,
         feature_flags = "",
         crunch_png = True,
@@ -568,7 +567,6 @@ def _package(
         non-final resources for linking against when building any srcs. This is
         generally only desirable for test targets that aren't potentially
         running compile-time optimizations.
-      generate_out_symbols: boolean. Whether to generate the merged symbols binary file.
       generate_resource_files_zip: boolean. Whether to generate resource_files.zip.
       feature_flags: string. The string value for --feature-flags to pass to aapt2.
       crunch_png: boolean. Determines whether `aapt2 compile` should crunch PNG files.
@@ -636,21 +634,6 @@ def _package(
             for node_info in depset(transitive = direct_resources_nodes + transitive_resources_nodes, order = "preorder").to_list()
             if node_info.exports_manifest
         ])
-
-    if not acls.in_shared_library_resource_linking_allowlist(str(ctx.label)):
-        # to_list() safe to use as we expect this to be an empty depset in the non-error case
-        all_res_apks = depset(
-            resource_apks,
-            transitive = transitive_resource_apks,
-            order = "preorder",
-        ).to_list()
-        if all_res_apks:
-            fail(
-                "%s has resource apks in the transitive closure without being allowlisted.\n%s" % (
-                    ctx.label,
-                    all_res_apks,
-                ),
-            )
 
     # TODO(b/156763506): Add analysis tests to verify logic around when manifest merging is configured.
     # TODO(b/154153771): Run the android merger if mergee_manifests or manifest values are present.
@@ -732,13 +715,11 @@ def _package(
     resource_files_zip = ctx.actions.declare_file(
         "_migrated/" + ctx.label.name + "_files/resource_files.zip",
     ) if generate_resource_files_zip else None
-    out_symbols = ctx.actions.declare_file("_migrated/" + ctx.label.name + "_symbols/merged.bin") if generate_out_symbols else None
     _busybox.package(
         ctx,
         out_file = resource_apk,
         out_r_src_jar = r_java,
         out_r_txt = r_txt,
-        out_symbols = out_symbols,
         out_manifest = processed_manifest,
         out_proguard_cfg = proguard_cfg,
         out_main_dex_proguard_cfg = main_dex_proguard_cfg,
@@ -777,7 +758,7 @@ def _package(
         aapt = aapt,
         busybox = busybox,
         host_javabase = host_javabase,
-        debug = compilation_mode != _compilation_mode.OPT,
+        debug = (compilation_mode != _compilation_mode.OPT) or ("hwasan" in ctx.features),
         should_throw_on_conflict = should_throw_on_conflict,
     )
 
@@ -878,7 +859,7 @@ def _liteparse(ctx, out_r_pb, resource_files, android_kit):
         inputs = resource_files,
         outputs = [out_r_pb],
         mnemonic = "ResLiteParse",
-        progress_message = "Lite parse Android Resources %s" % ctx.label,
+        progress_message = "Lite parse Android Resources %{label}",
         toolchain = None,
     )
 
@@ -1050,7 +1031,7 @@ def _bump_min_sdk(
         outputs = [out_manifest, log],
         arguments = ["minsdkfloor", args],
         mnemonic = "BumpMinSdkFloor",
-        progress_message = "Bumping up AndroidManifest min SDK %s" % str(ctx.label),
+        progress_message = "Bumping up AndroidManifest min SDK %{label}",
         toolchain = ANDROID_TOOLCHAIN_TYPE,
     )
     manifest_ctx[_PROCESSED_MANIFEST] = out_manifest
@@ -1098,7 +1079,7 @@ def _set_default_min_sdk(
         outputs = [out_manifest, log],
         arguments = ["minsdkfloor", args],
         mnemonic = "SetDefaultMinSdkFloor",
-        progress_message = "Setting AndroidManifest min SDK to default %s" % str(ctx.label),
+        progress_message = "Setting AndroidManifest min SDK to default %{label}",
         toolchain = ANDROID_TOOLCHAIN_TYPE,
     )
     manifest_ctx[_PROCESSED_MANIFEST] = out_manifest
